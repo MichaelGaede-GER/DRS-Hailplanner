@@ -243,7 +243,7 @@ exception when duplicate_object then null; end $$;`;
 
 /* ============ Seed & constants ============ */
 const SEED=JSON.parse(document.getElementById('seed-data').textContent);
-const DEFAULT_ROLES=["Projektleiter","Projektassistenz","Techniker","Besichtiger","Disposition"];
+const DEFAULT_ROLES=["Projektleiter","Projektassistenz","Techniker","Monteur","Besichtiger","Disposition"];
 const DEFAULT_EINSATZ=["Begutachtung","Projektleitung","Reparatur","Vorbereitung","Besichtigung","Finance"];
 const DEFAULT_TYPEN=["Versicherungen","Autohaus Kunden","Hagelcover","Autohaus","Großprojekte"];
 const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{name:"Nürnberger",color:"#d97706"},
@@ -956,7 +956,7 @@ function Technikerplanung({store}){
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
-  const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");const[onlyTech,setOnlyTech]=useState(false);
+  const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");
   const monday=mondayOfWeek(yr,wk);
   const wdays=workDaysOfWeek(monday,workdays);const days=wdays.map(w=>w.date);const dayIdx=wdays.map(w=>w.idx);
   const weekDates=days.map(ymd);
@@ -966,7 +966,8 @@ function Technikerplanung({store}){
     if(versFilter&&t.versicherung!==versFilter)return false;
     return true;}
   const cellItems=(empId,date)=>techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t));
-  const visibleEmployees=employees.filter(e=>(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase()))&&(!onlyTech||(e.role||"").toLowerCase().includes("techn")));
+  const isTech=e=>{const r=(e.role||"").toLowerCase();return r.includes("techn")||r.includes("monteur");};
+  const visibleEmployees=employees.filter(e=>isTech(e)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveTech(dragId,empId,date);setDragId(null);setDropCell(null);}
   const usedVers=versicherungen.filter(v=>v.active!==false);
   const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
@@ -995,9 +996,9 @@ function Technikerplanung({store}){
         <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
       <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
         <option value="">Alle Versicherungen</option>{usedVers.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}</select>
-      <label className="flex mini" style={{gap:6,cursor:"pointer"}}><input type="checkbox" style={{width:"auto"}} checked={onlyTech} onChange={e=>setOnlyTech(e.target.checked)}/> nur Techniker</label>
-      {(empQ||projFilter||versFilter||onlyTech)&&<button className="btn ghost sm" onClick={()=>{setEmpQ("");setProjFilter("");setVersFilter("");setOnlyTech(false);}}>Filter zurücksetzen</button>}
+      {(empQ||projFilter||versFilter)&&<button className="btn ghost sm" onClick={()=>{setEmpQ("");setProjFilter("");setVersFilter("");}}>Filter zurücksetzen</button>}
       <span className="spacer"></span>
+      <span className="mini muted">Nur Rollen „Techniker" / „Monteur"</span>
       <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
         <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
     </div>
@@ -1030,7 +1031,8 @@ function Technikerplanung({store}){
           </div>);})}
       </React.Fragment>))}
     </div></div>
-    {visibleEmployees.length===0&&<div className="empty"><div className="big">Kein Techniker gefunden</div></div>}
+    {visibleEmployees.length===0&&<div className="empty"><div className="big">Keine Techniker oder Monteure erfasst</div>
+      <div>Setze bei den betreffenden Personen unter „Mitarbeiter" die Rolle auf <b>Techniker</b> oder <b>Monteur</b>.</div></div>}
 
     {awRows.length>0&&<div className="card" style={{marginTop:16}}><div className="card-h"><h3>AW-Auslastung · KW {wk}</h3>
       {awCapacity>0?<span className="mini muted">Wochenkapazität je Techniker: {awCapacity} AW (in Einstellungen änderbar)</span>:<span className="mini muted">Tipp: Wochenkapazität in Einstellungen setzen für Auslastung in %</span>}</div>
