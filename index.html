@@ -178,6 +178,7 @@ create table if not exists employees (
 create table if not exists projects (
   nr text primary key, name text default '', alias text default '', typ text default '',
   leiter jsonb default '[]'::jsonb, gesellschaft text default '', adresse text default '',
+  versicherung text default '', rollen jsonb default '{}'::jsonb,
   schadendatum date, startdatum date, enddatum date,
   gesamt int default 0, fiktiv int default 0, zu_reparieren int default 0,
   dol_fertig int default 0, fortschritt numeric default 0,
@@ -190,6 +191,7 @@ create table if not exists assignments (
   project_nr text, project_nrs jsonb default '[]'::jsonb,
   einsatz text, title text, ort text default 'inland',
   all_day boolean default true, start_time text, end_time text,
+  adresse text, projektrolle text,
   note text default '', created_by text, created_at timestamptz default now());
 
 create table if not exists settings (key text primary key, value jsonb);
@@ -205,17 +207,26 @@ create policy "auth all" on settings    for all to authenticated using (true) wi
 const MIGRATION_SQL=`-- Update-Skript (nur falls die Tabellen aus einer früheren Version schon existieren)
 alter table projects    add column if not exists alias text default '';
 alter table projects    add column if not exists adresse text default '';
+alter table projects    add column if not exists versicherung text default '';
+alter table projects    add column if not exists rollen jsonb default '{}'::jsonb;
 alter table assignments add column if not exists project_nrs jsonb default '[]'::jsonb;
 alter table assignments add column if not exists all_day boolean default true;
 alter table assignments add column if not exists start_time text;
 alter table assignments add column if not exists end_time text;
-alter table assignments add column if not exists created_by text;`;
+alter table assignments add column if not exists created_by text;
+alter table assignments add column if not exists adresse text;
+alter table assignments add column if not exists projektrolle text;`;
 
 /* ============ Seed & constants ============ */
 const SEED=JSON.parse(document.getElementById('seed-data').textContent);
 const DEFAULT_ROLES=["Projektleiter","Projektassistenz","Techniker","Besichtiger","Disposition"];
 const DEFAULT_EINSATZ=["Begutachtung","Projektleitung","Reparatur","Vorbereitung","Besichtigung","Finance"];
 const DEFAULT_TYPEN=["Versicherungen","Autohaus Kunden","Hagelcover","Autohaus","Großprojekte"];
+const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{name:"Nürnberger",color:"#d97706"},
+  {name:"Münchner",color:"#db2777"},{name:"R+V",color:"#7c3aed"},{name:"HUK",color:"#0d9488"}];
+const DEFAULT_WORKDAYS=[0,1,2,3,4,5]; // 0=Mo … 6=So  → Mo–Sa
+const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker"];
+const ROLLE_KUERZEL={"Erstgespräch":"E","Besichtigung":"B","Projektleiter":"P","Techniker":"T"};
 const STATUS_COLORS={"Begutachtung":"b-amber","Reparatur":"b-blue","Finance":"b-green","Vorbereitung":"b-violet","Beendet":"b-gray","fiktiv":"b-red","Projektleitung":"b-teal","Besichtigung":"b-amber"};
 const EINSATZ_COLORS={"Begutachtung":"#d97706","Projektleitung":"#0d9488","Reparatur":"#2563eb","Vorbereitung":"#7c3aed","Besichtigung":"#d97706","Finance":"#059669"};
 
@@ -240,23 +251,26 @@ const uid=()=>Math.random().toString(36).slice(2,10);
 
 /* ============ Mappers ============ */
 const projToDb=p=>({nr:p.nr,name:p.name||"",alias:p.alias||"",typ:p.typ||"",leiter:p.leiter||[],
-  gesellschaft:p.gesellschaft||"",adresse:p.adresse||"",schadendatum:p.schadendatum||null,
+  gesellschaft:p.gesellschaft||"",adresse:p.adresse||"",versicherung:p.versicherung||"",rollen:p.rollen||{},
+  schadendatum:p.schadendatum||null,
   startdatum:p.startdatum||null,enddatum:p.enddatum||null,gesamt:p.gesamt||0,fiktiv:p.fiktiv||0,
   zu_reparieren:p.zuReparieren||0,dol_fertig:p.dolFertig||0,fortschritt:p.fortschritt||0,
   umsatz:p.umsatz||0,technikerkosten:p.technikerkosten||0,status:p.status||"Vorbereitung"});
 const projFromDb=r=>({nr:r.nr,name:r.name,alias:r.alias||"",typ:r.typ,leiter:r.leiter||[],
-  gesellschaft:r.gesellschaft||"",adresse:r.adresse||"",schadendatum:r.schadendatum,
+  gesellschaft:r.gesellschaft||"",adresse:r.adresse||"",versicherung:r.versicherung||"",rollen:r.rollen||{},
+  schadendatum:r.schadendatum,
   startdatum:r.startdatum,enddatum:r.enddatum,gesamt:r.gesamt,fiktiv:r.fiktiv,zuReparieren:r.zu_reparieren,
   dolFertig:r.dol_fertig,fortschritt:Number(r.fortschritt)||0,umsatz:Number(r.umsatz)||0,
   technikerkosten:Number(r.technikerkosten)||0,status:r.status});
 const asgToDb=a=>({employee_id:a.employeeId,date:a.date,type:a.type,project_nr:null,
   project_nrs:a.projectNrs||[],einsatz:a.einsatz||null,title:a.title||null,ort:a.ort||"inland",
   all_day:a.allDay!==false,start_time:a.allDay===false?(a.startTime||null):null,
-  end_time:a.allDay===false?(a.endTime||null):null,note:a.note||"",created_by:a.createdBy||null});
+  end_time:a.allDay===false?(a.endTime||null):null,note:a.note||"",created_by:a.createdBy||null,
+  adresse:a.adresse||null,projektrolle:a.projektrolle||null});
 const asgFromDb=r=>({id:r.id,employeeId:r.employee_id,date:r.date,type:r.type,
   projectNrs:(r.project_nrs&&r.project_nrs.length)?r.project_nrs:(r.project_nr?[r.project_nr]:[]),
   einsatz:r.einsatz,title:r.title,ort:r.ort,allDay:r.all_day!==false,startTime:r.start_time,
-  endTime:r.end_time,note:r.note,createdBy:r.created_by});
+  endTime:r.end_time,note:r.note,createdBy:r.created_by,adresse:r.adresse||"",projektrolle:r.projektrolle||""});
 
 /* ============ Icons ============ */
 const Ic=({d,...p})=>(<svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -330,7 +344,7 @@ function Root(){
   },[cfg]);
   if(booting)return<div className="center-screen"><div className="spin"></div></div>;
   if(!cfg.url||!cfg.key)return<Setup onSaved={()=>setCfg(getConfig())}/>;
-  if(!session)return<Login sb={sb} onReset={()=>{localStorage.removeItem("pms_sb_url");localStorage.removeItem("pms_sb_key");setCfg(getConfig());}}/>;
+  if(!session)return<Login sb={sb}/>;
   return<App sb={sb} session={session}/>;
 }
 
@@ -354,17 +368,23 @@ function Setup({onSaved}){
   </div></div>);
 }
 
-function Login({sb,onReset}){
-  const[email,setEmail]=useState("");const[pw,setPw]=useState("");const[err,setErr]=useState("");const[busy,setBusy]=useState(false);
-  async function submit(){setErr("");setBusy(true);const{error}=await sb.auth.signInWithPassword({email:email.trim(),password:pw});setBusy(false);if(error)setErr(error.message);}
+function Login({sb}){
+  const[email,setEmail]=useState("");const[pw,setPw]=useState("");const[err,setErr]=useState("");
+  const[info,setInfo]=useState("");const[busy,setBusy]=useState(false);
+  async function submit(){setErr("");setInfo("");setBusy(true);const{error}=await sb.auth.signInWithPassword({email:email.trim(),password:pw});setBusy(false);if(error)setErr(error.message);}
+  async function forgot(){setErr("");setInfo("");
+    if(!email.trim()){setErr("Bitte zuerst deine E-Mail-Adresse eingeben.");return;}
+    const{error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:window.location.href});
+    if(error)setErr(error.message);else setInfo("E-Mail zum Zurücksetzen des Passworts wurde gesendet (bitte auch den Spam-Ordner prüfen).");}
   return(<div className="center-screen"><div className="auth-card">
     <h1>DRS Personalmanagement</h1><p className="lead">Bitte anmelden.</p>
     {err&&<div className="err">{err}</div>}
-    <div className="field"><label>E-Mail</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
+    {info&&<div style={{background:"var(--green-l)",color:"var(--green)",padding:"9px 12px",borderRadius:8,fontSize:13,marginBottom:12}}>{info}</div>}
+    <div className="field"><label>Benutzername (E-Mail)</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
     <div className="field"><label>Passwort</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
-    <button className="btn primary" style={{width:"100%"}} onClick={submit} disabled={busy}>{busy?"Anmelden…":"Anmelden"}</button>
-    <p className="mini muted" style={{marginTop:16,textAlign:"center"}}>Benutzer werden im Supabase-Dashboard angelegt.<br/>
-      <a href="#" onClick={e=>{e.preventDefault();if(confirm("Supabase-Verbindung zurücksetzen?"))onReset();}}>Verbindung ändern</a></p>
+    <button className="btn primary" style={{width:"100%"}} onClick={submit} disabled={busy}>{busy?"Anmelden…":"Einloggen"}</button>
+    <p className="mini muted" style={{marginTop:16,textAlign:"center"}}>
+      <a href="#" onClick={e=>{e.preventDefault();forgot();}}>Passwort vergessen?</a></p>
   </div></div>);
 }
 
@@ -376,6 +396,7 @@ function App({sb,session}){
   const[assignments,setAssignments]=useState([]);
   const[roles,setRoles]=useState(DEFAULT_ROLES);const[einsatz,setEinsatz]=useState(DEFAULT_EINSATZ);
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
+  const[workdays,setWorkdays]=useState(DEFAULT_WORKDAYS);const[versicherungen,setVersicherungen]=useState(DEFAULT_VERS);
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
@@ -395,6 +416,8 @@ function App({sb,session}){
       const sm={};(s.data||[]).forEach(r=>sm[r.key]=r.value);
       setRoles(sm.roles||DEFAULT_ROLES);setEinsatz(sm.einsatz||DEFAULT_EINSATZ);
       setTypen(sm.typen||DEFAULT_TYPEN);setAppUrl(sm.app_url||"");
+      setWorkdays(Array.isArray(sm.workdays)&&sm.workdays.length?sm.workdays:DEFAULT_WORKDAYS);
+      setVersicherungen(Array.isArray(sm.versicherungen)?sm.versicherungen:DEFAULT_VERS);
     }catch(err){setLoadErr(err.message||"Ladefehler");}
     setLoading(false);
   }
@@ -439,7 +462,7 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
     async seed(){
       const existing=new Set(employees.map(e=>e.name));
@@ -450,7 +473,7 @@ function App({sb,session}){
       showToast("Startdaten geladen");reload();},
   };
 
-  const store={employees,projects,assignments,roles,einsatz,typen,appUrl,api,showToast,session,myEmail,reload,schemaWarn};
+  const store={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,api,showToast,session,myEmail,reload,schemaWarn};
 
   const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["proj","Projekte",ICONS.proj],
     ["emp","Mitarbeiter",ICONS.emp],["stat","Statistik",ICONS.stat],["set","Einstellungen",ICONS.set]];
@@ -493,16 +516,41 @@ function projLabel(p){return p?(p.alias||p.name):"";}
 function timeLabel(a){return a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")):"";}
 function shortCreator(email){if(!email)return"";return email.split("@")[0];}
 function assignmentProjects(a,projects){return(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);}
+function shortName(n){if(!n)return"";const parts=n.split(",");return parts[0].trim();}
+function chipColor(a,projects,versicherungen){
+  if(a.type==="frei")return"var(--amber)";
+  const ps=assignmentProjects(a,projects);const vn=ps[0]?.versicherung;
+  const v=(versicherungen||[]).find(x=>x.name===vn);if(v)return v.color;
+  return EINSATZ_COLORS[a.einsatz]||"var(--brand)";}
+function computeRoles(project,assignments,employees){
+  const res={};
+  PROJEKTROLLEN.forEach(role=>{
+    const matches=assignments.filter(a=>a.projektrolle===role&&(a.projectNrs||[]).includes(project.nr))
+      .slice().sort((x,y)=>x.date<y.date?1:(x.date>y.date?-1:0));
+    if(matches.length){const cur=matches[0];const emp=employees.find(e=>e.id===cur.employeeId);
+      res[role]={name:emp?emp.name:"?",date:cur.date,source:"termin",
+        history:matches.map(m=>({name:(employees.find(e=>e.id===m.employeeId)||{}).name||"?",date:m.date}))};}
+    else{const man=(project.rollen||{})[role];
+      if(man&&(man.checked||man.name))res[role]={name:man.name||"geplant",date:null,source:"manuell",history:[]};
+      else res[role]=null;}
+  });
+  return res;
+}
+function workDaysOfWeek(monday,workdays){
+  const wd=(workdays&&workdays.length?workdays:DEFAULT_WORKDAYS).slice().sort((a,b)=>a-b);
+  return wd.map(i=>({idx:i,date:new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i)}));
+}
 
 function buildMessage(emp,a,projects,appUrl){
   const vn=emp?.name?.split(",")[1]?.trim()||emp?.name||"";
   const when=a.allDay===false&&a.startTime?(fmtDE(a.date)+", "+a.startTime+(a.endTime?"–"+a.endTime+" Uhr":" Uhr")):(fmtDE(a.date)+" (ganztägig)");
   let body;
-  if(a.type==="frei"){body=`Hallo ${vn}, Termin am ${when}: ${a.title||"Freier Termin"}${a.ort==="ausland"?" (Ausland)":""}.`;}
+  if(a.type==="frei"){body=`Hallo ${vn}, Termin am ${when}: ${a.title||"Freier Termin"}${a.ort==="ausland"?" (Ausland)":""}.`;
+    if(a.adresse)body+="\nAdresse: "+mapsLink(a.adresse);}
   else{
     const ps=assignmentProjects(a,projects);
     const names=ps.map(p=>p.name).join(", ")||"Projekt";
-    body=`Hallo ${vn}, du bist am ${when} eingeplant.\nProjekt(e): ${names}\nTätigkeit: ${a.einsatz||"-"}${a.ort==="ausland"?" (Ausland)":""}`;
+    body=`Hallo ${vn}, du bist am ${when} eingeplant.\nProjekt(e): ${names}\nTätigkeit: ${a.einsatz||"-"}${a.projektrolle?" / "+a.projektrolle:""}${a.ort==="ausland"?" (Ausland)":""}`;
     const withAddr=ps.filter(p=>p.adresse);
     if(withAddr.length)body+="\n"+withAddr.map(p=>"Adresse "+(p.alias||p.name)+": "+mapsLink(p.adresse)).join("\n");
   }
@@ -561,65 +609,89 @@ function Dashboard({store,go}){
 
 /* ============ WOCHENPLANUNG ============ */
 function Wochenplanung({store}){
-  const{employees,projects,assignments,api,appUrl}=store;
+  const{employees,projects,assignments,api,appUrl,workdays,versicherungen}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
   const[sendOpen,setSendOpen]=useState(false);
+  const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");
   const monday=mondayOfWeek(yr,wk);
-  const days=[...Array(7)].map((_,i)=>new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i));
+  const wdays=workDaysOfWeek(monday,workdays);
+  const days=wdays.map(w=>w.date);const dayIdx=wdays.map(w=>w.idx);
+  const fullWeek=[...Array(7)].map((_,i)=>new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i));
   const weekDates=days.map(ymd);
   const empById=id=>employees.find(e=>e.id===id);
   function nav(delta){let w=wk+delta,y=yr;if(w<1){y--;w=isoWeek(new Date(y,11,28));}else if(w>isoWeek(new Date(y,11,28))){y++;w=1;}setWk(w);setYr(y);}
-  const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date);
+  function matchesFilter(a){
+    if(projFilter&&!(a.projectNrs||[]).includes(projFilter))return false;
+    if(versFilter){const ps=assignmentProjects(a,projects);if(!ps.some(p=>p.versicherung===versFilter))return false;}
+    return true;
+  }
+  const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a));
+  const visibleEmployees=employees.filter(e=>!empQ||e.name.toLowerCase().includes(empQ.toLowerCase()));
   function onDrop(empId,date){if(!dragId)return;api.moveAssignment(dragId,empId,date);setDragId(null);setDropCell(null);}
-  function makePDF(){generateWeekPDF(employees,assignments,projects,wk,yr,days);}
-  const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[6])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
+  function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days);}
+  const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
+  const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
+  const usedVers=versicherungen.filter(v=>v.active!==false);
 
   return(<div>
-    <div className="flex wrap" style={{marginBottom:14}}>
+    <div className="flex wrap" style={{marginBottom:12}}>
       <button className="btn sm" onClick={()=>nav(-1)}><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
-      <div style={{fontWeight:700,fontSize:16,minWidth:190,textAlign:"center"}}>KW {wk} · {yr}
-        <div className="mini muted" style={{fontWeight:400}}>{fmtDEShort(days[0])} – {fmtDEShort(days[6])}</div></div>
+      <div style={{fontWeight:700,fontSize:16,minWidth:180,textAlign:"center"}}>KW {wk} · {yr}
+        <div className="mini muted" style={{fontWeight:400}}>{fmtDEShort(days[0])} – {fmtDEShort(days[days.length-1])}</div></div>
       <button className="btn sm" onClick={()=>nav(1)}><Ic d={ICONS.chev}/></button>
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
-      <button className="btn sm" onClick={()=>{if(confirm("Alle Einsätze dieser Woche in die Folgewoche (KW "+(wk+1)+") kopieren?"))api.copyWeek(weekDates);}}><Ic d={ICONS.copy}/> → Folgewoche kopieren</button>
-      <button className="btn sm" onClick={makePDF}><Ic d={ICONS.pdf}/> Wochenplan PDF</button>
+      <button className="btn sm" onClick={()=>{if(confirm("Alle Einsätze dieser Woche in die Folgewoche (KW "+(wk+1)+") kopieren?"))api.copyWeek(weekDates);}}><Ic d={ICONS.copy}/> → Folgewoche</button>
+      <button className="btn sm" onClick={makePDF}><Ic d={ICONS.pdf}/> PDF</button>
       <a className="btn sm green" href={waLink("",wholeMsg)} target="_blank" rel="noopener"><Ic d={ICONS.wa}/> Teilen</a>
-      <button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne an Team senden</button>
+      <button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne senden</button>
     </div>
-    <div className="mini muted" style={{marginBottom:8}}>Tag anklicken für neuen Einsatz · Chips per Drag &amp; Drop verschieben · Klick auf einen Eintrag zum Bearbeiten/Übergeben</div>
-    <div className="week-scroll"><div className="week-grid" style={{gridTemplateColumns:"160px repeat(7,minmax(130px,1fr))"}}>
+    <div className="flex wrap" style={{marginBottom:10,gap:8}}>
+      <div style={{position:"relative"}}>
+        <Ic d={ICONS.search} style={{position:"absolute",left:9,top:9,width:15,height:15,color:"var(--muted)"}}/>
+        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Mitarbeiter suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>
+      <select style={{width:"auto",padding:"7px 10px"}} value={projFilter} onChange={e=>setProjFilter(e.target.value)}>
+        <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
+      <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
+        <option value="">Alle Versicherungen</option>{usedVers.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}</select>
+      {(empQ||projFilter||versFilter)&&<button className="btn ghost sm" onClick={()=>{setEmpQ("");setProjFilter("");setVersFilter("");}}>Filter zurücksetzen</button>}
+      <span className="spacer"></span>
+      <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
+        <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
+    </div>
+    <div className="week-scroll"><div className="week-grid" style={{gridTemplateColumns:"160px repeat("+days.length+",minmax(130px,1fr))"}}>
       <div className="wg-emp corner">Mitarbeiter</div>
-      {days.map((d,i)=>(<div key={i} className={"wg-head"+(ymd(d)===todayYMD?" today":"")}>{DAYNAMES[i]} {fmtDEShort(d)}</div>))}
-      {employees.map(emp=>(<React.Fragment key={emp.id}>
+      {days.map((d,i)=>(<div key={i} className={"wg-head"+(ymd(d)===todayYMD?" today":"")}>{DAYNAMES[dayIdx[i]]} {fmtDEShort(d)}</div>))}
+      {visibleEmployees.map(emp=>(<React.Fragment key={emp.id}>
         <div className="wg-emp">{emp.name}</div>
         {days.map((d,i)=>{const date=ymd(d);const items=cellItems(emp.id,date);
           const cellKey=emp.id+date;
           return(<div key={i}
-            className={"wg-cell wg-day"+(i>=5?" weekend":"")+(date===todayYMD?" today":"")+(dropCell===cellKey?" drop-hover":"")}
+            className={"wg-cell wg-day"+(dayIdx[i]>=5?" weekend":"")+(date===todayYMD?" today":"")+(dropCell===cellKey?" drop-hover":"")}
             onClick={e=>{if(e.target.closest(".chip"))return;setModal({employeeId:emp.id,date});}}
             onDragOver={e=>{e.preventDefault();setDropCell(cellKey);}}
             onDragLeave={()=>setDropCell(c=>c===cellKey?null:c)}
             onDrop={e=>{e.preventDefault();onDrop(emp.id,date);}}>
             {items.map(a=>{const ps=assignmentProjects(a,projects);const first=ps[0];
-              const col=a.type==="frei"?"var(--amber)":(EINSATZ_COLORS[a.einsatz]||"var(--brand)");
+              const col=chipColor(a,projects,versicherungen);
               const label=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||a.projectNrs.join(", "));
               const prog=a.type!=="frei"&&ps.length===1?Math.round((first.fortschritt||0)*100)+"%":"";
               return(<div key={a.id} className={"chip"+(a.type==="frei"?" frei":"")}
                 draggable onDragStart={()=>setDragId(a.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
-                style={{borderLeftColor:col}} title={label+(a.createdBy?"\nEingetragen von: "+a.createdBy:"")}
+                style={{borderLeftColor:col}} title={label+(first?.versicherung?"\nVersicherung: "+first.versicherung:"")+(a.projektrolle?"\nRolle: "+a.projektrolle:"")+(a.createdBy?"\nEingetragen von: "+a.createdBy:"")}
                 onClick={e=>{e.stopPropagation();setModal({employeeId:emp.id,date,editing:a});}}>
                 {a.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
                 <span className="cn">{label}</span>
-                <span className="cs">{[a.type==="frei"?"Freier Termin":a.einsatz,timeLabel(a),prog].filter(Boolean).join(" · ")}</span>
+                <span className="cs">{[a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz),timeLabel(a),prog].filter(Boolean).join(" · ")}</span>
                 {a.createdBy&&<span className="cby">✎ {shortCreator(a.createdBy)}</span>}
               </div>);})}
             {items.length===0&&<div className="add-hint">+</div>}
           </div>);})}
       </React.Fragment>))}
     </div></div>
+    {visibleEmployees.length===0&&<div className="empty"><div className="big">Kein Mitarbeiter gefunden</div></div>}
     {modal&&<AssignModal store={store} ctx={modal} onClose={()=>setModal(null)}/>}
     {sendOpen&&<SendModal store={store} onClose={()=>setSendOpen(false)}/>}
   </div>);
@@ -637,16 +709,21 @@ function AssignModal({store,ctx,onClose}){
   const[allDay,setAllDay]=useState(ed?ed.allDay!==false:true);
   const[startTime,setStartTime]=useState(ed?.startTime||"08:00");const[endTime,setEndTime]=useState(ed?.endTime||"17:00");
   const[handTo,setHandTo]=useState("");
+  const[projektrolle,setProjektrolle]=useState(ed?.projektrolle||"");
+  const[freeAddr,setFreeAddr]=useState(ed?.adresse||"");
   const activeProjects=projects.filter(p=>p.status!=="Beendet");
   const filtered=activeProjects.filter(p=>!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q));
   function toggleProj(nr){setSelProjects(s=>s.includes(nr)?s.filter(x=>x!==nr):[...s,nr]);}
+  const selProjObjs=selProjects.map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
+  const versName=selProjObjs[0]?.versicherung||"";
 
   async function submit(){
     if(mode==="project"&&selProjects.length===0){store.showToast("Bitte mindestens ein Projekt wählen");return;}
     if(mode==="frei"&&!title.trim()){store.showToast("Bitte Titel eingeben");return;}
     const base={employeeId:ctx.employeeId,type:mode,projectNrs:mode==="project"?selProjects:[],
       einsatz:mode==="project"?eins:null,title:mode==="frei"?title.trim():null,ort,note,allDay,
-      startTime:allDay?null:startTime,endTime:allDay?null:endTime};
+      startTime:allDay?null:startTime,endTime:allDay?null:endTime,
+      adresse:mode==="frei"?freeAddr.trim():null,projektrolle:mode==="project"?(projektrolle||null):null};
     const lo=fromDate>toDate?toDate:fromDate, hi=fromDate>toDate?fromDate:toDate;
     if(ed){
       const ok=await api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy});
@@ -663,7 +740,7 @@ function AssignModal({store,ctx,onClose}){
   async function doHandover(){if(!handTo)return;const tgt=employees.find(e=>e.id===handTo);
     if(await api.handOver(ed.id,handTo,tgt?.name||""))onClose();}
 
-  const previewA={date:ctx.date,type:mode,projectNrs:selProjects,einsatz:eins,title,ort,note,allDay,startTime,endTime};
+  const previewA={date:ctx.date,type:mode,projectNrs:selProjects,einsatz:eins,title,ort,note,allDay,startTime,endTime,adresse:freeAddr,projektrolle};
   const msg=buildMessage(emp,previewA,projects,appUrl);
   const subj=mode==="project"?("Einsatzplanung "+fmtDE(ctx.date)):("Termin "+fmtDE(ctx.date));
   const handTgt=employees.find(e=>e.id===handTo);
@@ -700,9 +777,23 @@ function AssignModal({store,ctx,onClose}){
           {filtered.length===0&&<div className="muted mini" style={{padding:8}}>Keine Projekte gefunden.</div>}</div></div>
       <div className="field"><label>Tätigkeit / Einsatzstatus</label>
         <select value={eins} onChange={e=>setEins(e.target.value)}>{einsatz.map(x=><option key={x}>{x}</option>)}</select></div>
+      <div className="field"><label>Projektrolle (optional – erscheint im Projekt-Planungsbalken &amp; in der Historie)</label>
+        <select value={projektrolle} onChange={e=>setProjektrolle(e.target.value)}>
+          <option value="">— keine —</option>{PROJEKTROLLEN.map(r=><option key={r}>{r}</option>)}</select></div>
+      {selProjObjs.length>0&&<div className="notify-box" style={{marginBottom:14}}>
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Projektdaten</div>
+        {selProjObjs.map(p=>(<div key={p.nr} className="mini" style={{marginBottom:4}}>
+          <b>{p.name}</b>{p.versicherung?<span className="badge b-gray" style={{marginLeft:6}}>{p.versicherung}</span>:null}
+          {p.adresse?<div className="flex" style={{gap:6,marginTop:2}}><Ic d={ICONS.pin} style={{width:13,height:13,color:"var(--muted)"}}/>
+            <span>{p.adresse}</span><a href={mapsLink(p.adresse)} target="_blank" rel="noopener" className="btn ghost sm" style={{padding:"2px 8px"}}>Route öffnen</a></div>
+            :<div className="muted" style={{marginTop:2}}>Keine Adresse hinterlegt (im Projekt ergänzbar)</div>}
+        </div>))}</div>}
     </>:<>
       <div className="field"><label>Titel des Termins</label>
         <input placeholder="z. B. Urlaub, Schulung, Sondereinsatz…" value={title} onChange={e=>setTitle(e.target.value)}/></div>
+      <div className="field"><label>Adresse (optional – für Google-Maps-Link)</label>
+        <input placeholder="Straße Hausnr, PLZ Ort" value={freeAddr} onChange={e=>setFreeAddr(e.target.value)}/>
+        {freeAddr.trim()&&<a href={mapsLink(freeAddr)} target="_blank" rel="noopener" className="btn ghost sm" style={{marginTop:6}}><Ic d={ICONS.pin}/> Route öffnen</a>}</div>
     </>}
 
     <div className="field"><label>Zeit</label>
@@ -738,20 +829,22 @@ function AssignModal({store,ctx,onClose}){
 }
 
 function SendModal({store,onClose}){
-  const{employees,assignments,projects,appUrl}=store;
+  const{employees,assignments,projects,appUrl,workdays}=store;
   const now=new Date();const nx=new Date(now);nx.setDate(now.getDate()+7);
   const wk=isoWeek(nx),yr=isoYear(nx);const monday=mondayOfWeek(yr,wk);
-  const days=[...Array(7)].map((_,i)=>new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i));
+  const days=workDaysOfWeek(monday,workdays).map(w=>w.date);
   const dates=days.map(ymd);
   const rows=employees.map(e=>({e,items:assignments.filter(a=>a.employeeId===e.id&&dates.includes(a.date))})).filter(r=>r.items.length>0);
+  const dname=d=>DAYNAMES[(d.getDay()+6)%7];
   function personText(e,items){
-    let t=`Hallo ${e.name.split(",")[1]?.trim()||e.name}, dein Einsatzplan für KW ${wk} (${fmtDEShort(days[0])}–${fmtDEShort(days[6])}):\n`;
-    dates.forEach((d,i)=>{const dayItems=items.filter(a=>a.date===d);if(!dayItems.length)return;
-      t+=`\n${DAYNAMES[i]} ${fmtDEShort(days[i])}:`;
+    let t=`Hallo ${e.name.split(",")[1]?.trim()||e.name}, dein Einsatzplan für KW ${wk} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}):\n`;
+    days.forEach((dd,i)=>{const d=ymd(dd);const dayItems=items.filter(a=>a.date===d);if(!dayItems.length)return;
+      t+=`\n${dname(dd)} ${fmtDEShort(dd)}:`;
       dayItems.forEach(a=>{const ps=assignmentProjects(a,projects);
         const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Projekt");
-        t+=`\n  • ${lbl}${a.einsatz?" ("+a.einsatz+")":""}${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}${a.ort==="ausland"?" [Ausland]":""}`;
-        const withAddr=ps.filter(p=>p.adresse);withAddr.forEach(p=>{t+=`\n    Adresse: ${mapsLink(p.adresse)}`;});});});
+        t+=`\n  • ${lbl}${a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":"")}${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}${a.ort==="ausland"?" [Ausland]":""}`;
+        const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
+        adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});});
     if(appUrl)t+=`\n\nBei Änderungen bitte aktiv in den Plan schauen: ${appUrl}`;
     return t;}
   return(<Modal title={"Einsatzpläne senden · nächste Woche (KW "+wk+")"} onClose={onClose} wide
@@ -775,17 +868,17 @@ function SendModal({store,onClose}){
 /* ============ PDF generators ============ */
 function ensurePDF(){if(!window.jspdf){alert("PDF-Bibliothek nicht geladen (Internet nötig).");return null;}return window.jspdf.jsPDF;}
 function generateWeekPDF(employees,assignments,projects,wk,yr,days){
-  const JsPDF=ensurePDF();if(!JsPDF)return;
+  const JsPDF=ensurePDF();if(!JsPDF)return;const dn=d=>DAYNAMES[(d.getDay()+6)%7];
   const doc=new JsPDF({orientation:"landscape",unit:"mm",format:"a4"});
   doc.setFontSize(14);doc.text("Wochenplan KW "+wk+" / "+yr,14,14);
-  doc.setFontSize(9);doc.setTextColor(120);doc.text(fmtDE(ymd(days[0]))+" – "+fmtDE(ymd(days[6])),14,20);
-  const head=[["Mitarbeiter",...days.map((d,i)=>DAYNAMES[i]+" "+fmtDEShort(d))]];
+  doc.setFontSize(9);doc.setTextColor(120);doc.text(fmtDE(ymd(days[0]))+" – "+fmtDE(ymd(days[days.length-1])),14,20);
+  const head=[["Mitarbeiter",...days.map(d=>dn(d)+" "+fmtDEShort(d))]];
   const body=employees.map(e=>{const row=[e.name];
     days.forEach(d=>{const date=ymd(d);const items=assignments.filter(a=>a.employeeId===e.id&&a.date===date);
       row.push(items.map(a=>{const ps=(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
         const lbl=a.type==="frei"?(a.title||"Frei"):(ps.map(p=>p.alias||p.name).join(", ")||"Projekt");
         const t=a.allDay===false&&a.startTime?a.startTime+(a.endTime?"-"+a.endTime:""):"";
-        return lbl+(a.einsatz?" ("+a.einsatz+")":"")+(t?" "+t:"")+(a.ort==="ausland"?" [Ausl.]":"");}).join("\n"));});
+        return lbl+(a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":""))+(t?" "+t:"")+(a.ort==="ausland"?" [Ausl.]":"");}).join("\n"));});
     return row;});
   doc.autoTable({head,body,startY:24,styles:{fontSize:7,cellPadding:1.5,valign:"top",overflow:"linebreak"},
     headStyles:{fillColor:[37,99,235],fontSize:7.5},columnStyles:{0:{fontStyle:"bold",cellWidth:32}},
@@ -793,21 +886,22 @@ function generateWeekPDF(employees,assignments,projects,wk,yr,days){
   doc.save("Wochenplan_KW"+wk+"_"+yr+".pdf");
 }
 function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl){
-  const JsPDF=ensurePDF();if(!JsPDF)return;
+  const JsPDF=ensurePDF();if(!JsPDF)return;const dn=d=>DAYNAMES[(d.getDay()+6)%7];
   const doc=new JsPDF({unit:"mm",format:"a4"});
   doc.setFontSize(15);doc.text("Einsatzplan · "+emp.name,14,16);
-  doc.setFontSize(10);doc.setTextColor(120);doc.text("KW "+wk+" / "+yr+"  ("+fmtDE(ymd(days[0]))+" – "+fmtDE(ymd(days[6]))+")",14,23);
+  doc.setFontSize(10);doc.setTextColor(120);doc.text("KW "+wk+" / "+yr+"  ("+fmtDE(ymd(days[0]))+" – "+fmtDE(ymd(days[days.length-1]))+")",14,23);
   doc.setTextColor(20);
   const body=[];
   days.forEach((d,i)=>{const date=ymd(d);const dayItems=items.filter(a=>a.date===date);
-    if(!dayItems.length){body.push([DAYNAMES[i]+" "+fmtDEShort(d),"—"]);return;}
+    if(!dayItems.length){body.push([dn(d)+" "+fmtDEShort(d),"—"]);return;}
     dayItems.forEach((a,idx)=>{const ps=(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
       const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Projekt");
       const t=a.allDay===false&&a.startTime?a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr":"ganztägig";
-      let cell=lbl+"\n"+[a.einsatz,t,a.ort==="ausland"?"Ausland":""].filter(Boolean).join(" · ");
-      const withAddr=ps.filter(p=>p.adresse);if(withAddr.length)cell+="\n"+withAddr.map(p=>"Adresse: "+p.adresse).join("\n");
+      let cell=lbl+"\n"+[a.projektrolle||a.einsatz,t,a.ort==="ausland"?"Ausland":""].filter(Boolean).join(" · ");
+      const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
+      if(adrs.length)cell+="\n"+adrs.map(ad=>"Adresse: "+ad).join("\n");
       if(a.note)cell+="\nHinweis: "+a.note;
-      body.push([idx===0?DAYNAMES[i]+" "+fmtDEShort(d):"",cell]);});});
+      body.push([idx===0?dn(d)+" "+fmtDEShort(d):"",cell]);});});
   doc.autoTable({head:[["Tag","Einsatz"]],body,startY:28,styles:{fontSize:9,cellPadding:2.5,valign:"top",overflow:"linebreak"},
     headStyles:{fillColor:[37,99,235]},columnStyles:{0:{fontStyle:"bold",cellWidth:26}},theme:"grid",margin:{left:12,right:12}});
   let y=doc.lastAutoTable.finalY+10;
@@ -816,41 +910,57 @@ function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl){
 }
 
 /* ============ PROJEKTE ============ */
+const ACTIVE_STATUS=["Reparatur","Begutachtung","Finance"];
+const PLANNED_STATUS=["Vorbereitung"];
+function RoleBar({project,assignments,employees}){
+  const roles=computeRoles(project,assignments,employees);
+  return(<div className="flex" style={{gap:4}}>{PROJEKTROLLEN.map(r=>{const info=roles[r];const on=!!info;
+    return(<span key={r} title={r+(info?": "+info.name+(info.date?" ("+fmtDE(info.date)+")":"")+(info.source==="manuell"?" · manuell":""):" – offen")}
+      style={{width:22,height:22,borderRadius:6,display:"inline-flex",alignItems:"center",justifyContent:"center",
+        fontSize:11,fontWeight:700,background:on?"var(--green)":"#e2e8f0",color:on?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>);})}</div>);
+}
 function Projekte({store}){
-  const{projects,typen,api}=store;
-  const[q,setQ]=useState("");const[fStatus,setFStatus]=useState("");const[fTyp,setFTyp]=useState("");
+  const{projects,typen,api,versicherungen,assignments,employees}=store;
+  const[q,setQ]=useState("");const[view,setView]=useState("alle");const[fTyp,setFTyp]=useState("");const[fVers,setFVers]=useState("");
   const[edit,setEdit]=useState(null);const[importOpen,setImportOpen]=useState(false);
-  const statuses=[...new Set(projects.map(p=>p.status))].filter(Boolean);
+  const versColor=name=>{const v=(versicherungen||[]).find(x=>x.name===name);return v?v.color:null;};
   const filtered=projects.filter(p=>(!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q))&&
-    (!fStatus||p.status===fStatus)&&(!fTyp||p.typ===fTyp));
+    (view==="alle"||(view==="aktiv"&&ACTIVE_STATUS.includes(p.status))||(view==="geplant"&&PLANNED_STATUS.includes(p.status)))&&
+    (!fTyp||p.typ===fTyp)&&(!fVers||p.versicherung===fVers));
   function delProj(nr){if(confirm("Projekt "+nr+" wirklich löschen?"))api.deleteProject(nr);}
   return(<div>
-    <h2 className="ttl">Projekte</h2><div className="sub">Projekte erfassen, Alias &amp; Adresse pflegen und aus Excel importieren</div>
-    <div className="flex wrap" style={{marginBottom:16}}>
+    <h2 className="ttl">Projekte</h2><div className="sub">Projekte, Versicherung, Adresse &amp; Planungsstatus (Erstgespräch · Besichtigung · Projektleiter · Techniker)</div>
+    <div className="flex wrap" style={{marginBottom:12,gap:8}}>
+      <div className="pill-tabs">
+        <button className={view==="aktiv"?"active":""} onClick={()=>setView("aktiv")}>Aktive</button>
+        <button className={view==="geplant"?"active":""} onClick={()=>setView("geplant")}>Geplante</button>
+        <button className={view==="alle"?"active":""} onClick={()=>setView("alle")}>Alle</button></div>
       <div style={{position:"relative"}} className="search">
         <Ic d={ICONS.search} style={{position:"absolute",left:10,top:10,width:16,height:16,color:"var(--muted)"}}/>
         <input style={{paddingLeft:32}} placeholder="Suche Name / Alias / Nr…" value={q} onChange={e=>setQ(e.target.value)}/></div>
-      <select style={{width:"auto"}} value={fStatus} onChange={e=>setFStatus(e.target.value)}><option value="">Alle Status</option>{statuses.map(s=><option key={s}>{s}</option>)}</select>
       <select style={{width:"auto"}} value={fTyp} onChange={e=>setFTyp(e.target.value)}><option value="">Alle Typen</option>{typen.map(t=><option key={t}>{t}</option>)}</select>
+      <select style={{width:"auto"}} value={fVers} onChange={e=>setFVers(e.target.value)}><option value="">Alle Versicherungen</option>{(versicherungen||[]).map(v=><option key={v.name}>{v.name}</option>)}</select>
       <span className="spacer"></span><span className="mini muted">{filtered.length} / {projects.length}</span>
       <button className="btn" onClick={()=>setImportOpen(true)}><Ic d={ICONS.imp}/> Excel importieren</button>
       <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neues Projekt</button>
     </div>
     <div className="tbl-wrap"><table><thead><tr>
-      <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Adresse</th><th>Leiter</th>
+      <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Versich.</th><th>Planung (E·B·P·T)</th>
       <th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
-      {filtered.map(p=>(<tr key={p.nr} className="clickrow" onClick={()=>setEdit(p)} title="Zum Bearbeiten klicken">
-        <td style={{fontWeight:600}}>{p.nr}</td><td>{p.name}</td>
+      {filtered.map(p=>{const vc=versColor(p.versicherung);
+        return(<tr key={p.nr} className="clickrow" onClick={()=>setEdit(p)} title="Zum Bearbeiten klicken">
+        <td style={{fontWeight:600}}>{p.nr}</td>
+        <td><span className="flex" style={{gap:7}}>{vc&&<span className="dot" style={{background:vc}} title={p.versicherung}></span>}{p.name}</span></td>
         <td>{p.alias?<span className="badge b-blue">{p.alias}</span>:<span className="muted">—</span>}</td>
         <td><span className="badge b-gray">{p.typ}</span></td>
-        <td className="mini" style={{maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.adresse||<span className="muted">—</span>}</td>
-        <td className="mini">{(p.leiter||[]).map(l=>l.split(",")[0]).join(", ")||"–"}</td>
+        <td className="mini">{p.versicherung||<span className="muted">—</span>}</td>
+        <td><RoleBar project={p} assignments={assignments} employees={employees}/></td>
         <td><div className="flex"><div className="progress"><div style={{width:Math.round((p.fortschritt||0)*100)+"%"}}></div></div>
           <span className="mini">{Math.round((p.fortschritt||0)*100)}%</span></div></td>
         <td><span className={"badge "+(STATUS_COLORS[p.status]||"b-gray")}>{p.status}</span></td>
         <td onClick={e=>e.stopPropagation()}><div className="flex">
           <button className="btn sm" onClick={()=>setEdit(p)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
-          <button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>))}
+          <button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>);})}
       {filtered.length===0&&<tr><td colSpan="9"><div className="empty"><div className="big">Keine Projekte</div>
         <div>Lege eins an oder lade die Startdaten in den Einstellungen.</div></div></td></tr>}
     </tbody></table></div>
@@ -860,17 +970,23 @@ function Projekte({store}){
 }
 
 function ProjectEdit({store,proj,onClose}){
-  const{projects,typen,api}=store;const isNew=!proj.nr;
+  const{projects,typen,api,versicherungen,assignments,employees}=store;const isNew=!proj.nr;
   const[f,setF]=useState({nr:proj.nr||"",name:proj.name||"",alias:proj.alias||"",typ:proj.typ||typen[0]||"",
     leiter:(proj.leiter||[]).join("\n"),adresse:proj.adresse||"",startdatum:proj.startdatum||"",enddatum:proj.enddatum||"",
     fortschritt:proj.fortschritt!=null?Math.round(proj.fortschritt*100):0,status:proj.status||"Vorbereitung",
+    versicherung:proj.versicherung||"",
     gesellschaft:proj.gesellschaft||"DRS Hagelschaden",umsatz:proj.umsatz||0,technikerkosten:proj.technikerkosten||0});
+  const[rollen,setRollen]=useState(proj.rollen||{});
+  const[histOpen,setHistOpen]=useState("");
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
+  const setRolle=(r,patch)=>setRollen(o=>({...o,[r]:{...(o[r]||{}),...patch}}));
+  const derived=isNew?{}:computeRoles({...proj,rollen},assignments,employees);
   const allStatus=["Vorbereitung","Begutachtung","Reparatur","Finance","Beendet","fiktiv"];
   async function submit(){
     if(!f.nr.trim()){store.showToast("Projekt-Nr erforderlich");return;}
     if(isNew&&projects.some(p=>p.nr===f.nr.trim())){store.showToast("Nr existiert bereits");return;}
     const rec={...proj,nr:f.nr.trim(),name:f.name.trim(),alias:f.alias.trim(),typ:f.typ,adresse:f.adresse.trim(),
+      versicherung:f.versicherung,rollen,
       leiter:f.leiter.split("\n").map(x=>x.trim()).filter(Boolean),startdatum:f.startdatum||null,enddatum:f.enddatum||null,
       fortschritt:(parseFloat(f.fortschritt)||0)/100,status:f.status,gesellschaft:f.gesellschaft,
       umsatz:parseFloat(f.umsatz)||0,technikerkosten:parseFloat(f.technikerkosten)||0};
@@ -884,15 +1000,39 @@ function ProjectEdit({store,proj,onClose}){
     <div className="row2">
       <div className="field"><label>Alias / Kurzname (für Wochenplan)</label><input value={f.alias} onChange={e=>set("alias",e.target.value)} placeholder="z. B. „Senger Rheine"/></div>
       <div className="field"><label>Projekttyp</label><select value={f.typ} onChange={e=>set("typ",e.target.value)}>{typen.map(t=><option key={t}>{t}</option>)}</select></div></div>
-    <div className="field"><label>Adresse (für Google-Maps-Link an den Mitarbeiter)</label>
-      <input value={f.adresse} onChange={e=>set("adresse",e.target.value)} placeholder="Straße Hausnr, PLZ Ort"/></div>
+    <div className="row2">
+      <div className="field"><label>Versicherung (bestimmt die Farbe im Wochenplan)</label>
+        <select value={f.versicherung} onChange={e=>set("versicherung",e.target.value)}>
+          <option value="">— keine —</option>{(versicherungen||[]).map(v=><option key={v.name}>{v.name}</option>)}</select></div>
+      <div className="field"><label>Adresse (für Google-Maps-Link)</label>
+        <input value={f.adresse} onChange={e=>set("adresse",e.target.value)} placeholder="Straße Hausnr, PLZ Ort"/></div></div>
     <div className="row2">
       <div className="field"><label>Startdatum</label><input type="date" value={f.startdatum||""} onChange={e=>set("startdatum",e.target.value)}/></div>
       <div className="field"><label>Enddatum</label><input type="date" value={f.enddatum||""} onChange={e=>set("enddatum",e.target.value)}/></div></div>
     <div className="row2">
       <div className="field"><label>Projektstatus</label><select value={f.status} onChange={e=>set("status",e.target.value)}>{allStatus.map(s=><option key={s}>{s}</option>)}</select></div>
       <div className="field"><label>Fortschritt: {f.fortschritt}%</label><input type="range" min="0" max="100" value={f.fortschritt} onChange={e=>set("fortschritt",e.target.value)}/></div></div>
-    <div className="field"><label>Projektleiter (eine Person pro Zeile)</label>
+
+    <div className="field"><label>Planungsstatus / Rollen</label>
+      <div className="mini muted" style={{marginBottom:8}}>Aus der Terminplanung übernommene Rollen (letzter Eintrag zählt) erscheinen automatisch. Zusätzlich kannst du manuell einen Haken setzen bzw. einen Namen eintragen.</div>
+      {PROJEKTROLLEN.map(r=>{const d=derived[r];const man=rollen[r]||{};const fromTermin=d&&d.source==="termin";
+        return(<div key={r} style={{border:"1px solid var(--line)",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
+          <div className="flex" style={{gap:8}}>
+            <span style={{width:22,height:22,borderRadius:6,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:d?"var(--green)":"#e2e8f0",color:d?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>
+            <b style={{minWidth:110}}>{r}</b>
+            {fromTermin?<span className="mini"><span className="badge b-green">{shortName(d.name)}</span> <span className="muted">aktuell · {fmtDE(d.date)} · aus Termin</span></span>:
+              <label className="flex mini" style={{gap:6,cursor:"pointer"}}><input type="checkbox" style={{width:"auto"}} checked={!!man.checked} onChange={e=>setRolle(r,{checked:e.target.checked})}/> geplant</label>}
+            <span className="spacer"></span>
+            {fromTermin&&d.history.length>0&&<button type="button" className="btn ghost sm" onClick={()=>setHistOpen(h=>h===r?"":r)}>Historie ({d.history.length})</button>}
+          </div>
+          {!fromTermin&&<input style={{marginTop:6}} placeholder="Name manuell (optional)" value={man.name||""} onChange={e=>setRolle(r,{name:e.target.value})}/>}
+          {histOpen===r&&fromTermin&&<div className="diffcol" style={{marginTop:6}}>
+            {d.history.map((h,i)=>(<div key={i} className="mini flex" style={{justifyContent:"space-between",padding:"2px 0"}}>
+              <span>{fmtDE(h.date)}</span><span style={{fontWeight:600}}>{h.name}</span></div>))}</div>}
+        </div>);})}
+    </div>
+
+    <div className="field"><label>Projektleiter laut Import (eine Person pro Zeile)</label>
       <textarea value={f.leiter} onChange={e=>set("leiter",e.target.value)} placeholder="Nachname, Vorname"/></div>
   </Modal>);
 }
@@ -1062,10 +1202,42 @@ function ListEditor({title,desc,skey,items,api,showToast}){
     <div className="flex"><input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")add();}} placeholder="Neuen Eintrag hinzufügen…" style={{maxWidth:320}}/>
       <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Hinzufügen</button></div></div></div>);
 }
+function WorkdaysEditor({workdays,api,showToast}){
+  const names=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
+  const cur=workdays&&workdays.length?workdays:DEFAULT_WORKDAYS;
+  function toggle(i){let next=cur.includes(i)?cur.filter(x=>x!==i):[...cur,i];next=next.sort((a,b)=>a-b);
+    if(next.length===0){showToast("Mindestens ein Tag nötig");return;}api.setSetting("workdays",next);}
+  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Arbeitstage (Wochenplan)</h3></div><div className="card-b">
+    <p className="muted mini" style={{marginTop:0}}>Welche Tage im Wochenplan angezeigt werden. Standard: Montag–Samstag (6-Tage-Woche).</p>
+    <div className="flex wrap" style={{gap:8}}>{names.map((n,i)=>{const on=cur.includes(i);
+      return(<button key={i} className={"btn sm"+(on?" primary":"")} onClick={()=>toggle(i)}>{on?"✓ ":""}{n}</button>);})}</div></div></div>);
+}
+function VersEditor({versicherungen,api,showToast}){
+  const list=versicherungen||[];
+  const[name,setName]=useState("");const[color,setColor]=useState("#2563eb");
+  function add(){const v=name.trim();if(!v)return;if(list.some(x=>x.name.toLowerCase()===v.toLowerCase())){showToast("Existiert bereits");return;}
+    api.setSetting("versicherungen",[...list,{name:v,color,active:true}]);setName("");}
+  function update(i,patch){api.setSetting("versicherungen",list.map((x,idx)=>idx===i?{...x,...patch}:x));}
+  function remove(i){api.setSetting("versicherungen",list.filter((_,idx)=>idx!==i));}
+  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Versicherungen</h3></div><div className="card-b">
+    <p className="muted mini" style={{marginTop:0}}>Versicherungen mit eigener Farbe. Die Farbe kennzeichnet alle Termine im Wochenplan. Deaktivierte erscheinen nicht mehr in den Auswahllisten, bleiben aber an bestehenden Projekten erhalten.</p>
+    <div style={{marginBottom:12}}>{list.length===0&&<span className="muted mini">Noch keine Versicherung angelegt.</span>}
+      {list.map((v,i)=>(<div key={i} className="flex" style={{gap:10,padding:"6px 0",borderBottom:"1px solid var(--line)"}}>
+        <input type="color" value={v.color} onChange={e=>update(i,{color:e.target.value})} style={{width:44,height:32,padding:2}}/>
+        <input value={v.name} onChange={e=>update(i,{name:e.target.value})} style={{maxWidth:220}}/>
+        <span className="badge" style={{background:v.color,color:"#fff"}}>{v.name}</span>
+        <span className="spacer"></span>
+        <label className="flex mini" style={{gap:6,cursor:"pointer"}}><input type="checkbox" style={{width:"auto"}} checked={v.active!==false} onChange={e=>update(i,{active:e.target.checked})}/> aktiv</label>
+        <button className="btn ghost sm" onClick={()=>remove(i)} title="Löschen"><Ic d={ICONS.trash}/></button></div>))}</div>
+    <div className="flex" style={{gap:8}}>
+      <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:44,height:38,padding:2}}/>
+      <input value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Neue Versicherung…" style={{maxWidth:260}}/>
+      <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Hinzufügen</button></div></div></div>);
+}
 function Einstellungen({store}){
-  const{roles,einsatz,typen,appUrl,api,showToast,employees,projects,assignments}=store;
+  const{roles,einsatz,typen,appUrl,workdays,versicherungen,api,showToast,employees,projects,assignments}=store;
   const[seeding,setSeeding]=useState(false);const[urlVal,setUrlVal]=useState(appUrl);const[copied,setCopied]=useState("");
-  function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,exported:new Date().toISOString()};
+  function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,exported:new Date().toISOString()};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);a.download="drs-personal-backup-"+todayYMD+".json";a.click();showToast("Backup heruntergeladen");}
   async function doSeed(){if(!confirm("Startdaten (163 Projekte, 34 Mitarbeiter) laden? Vorhandene Projekte mit gleicher Nr werden überschrieben."))return;
@@ -1073,12 +1245,15 @@ function Einstellungen({store}){
   const empty=projects.length===0&&employees.length===0;
   const cp=t=>{navigator.clipboard.writeText(t);setCopied(t);setTimeout(()=>setCopied(""),1600);};
   return(<div>
-    <h2 className="ttl">Einstellungen</h2><div className="sub">Rollen, Status, Projekttypen, App-Link &amp; Daten</div>
+    <h2 className="ttl">Einstellungen</h2><div className="sub">Arbeitstage, Versicherungen, Rollen, Status, Projekttypen, App-Link &amp; Daten</div>
     {empty&&<div className="card" style={{marginBottom:18,borderColor:"var(--brand)"}}><div className="card-b">
       <div className="flex" style={{alignItems:"flex-start"}}><Ic d={ICONS.db} style={{width:26,height:26,color:"var(--brand)",flexShrink:0}}/>
         <div><div style={{fontWeight:600,marginBottom:4}}>Datenbank ist leer</div>
           <p className="muted mini" style={{margin:"0 0 12px"}}>Lade die mitgelieferten Startdaten (163 Projekte + 34 Mitarbeiter) in Supabase.</p>
           <button className="btn primary" onClick={doSeed} disabled={seeding}>{seeding?"Lädt…":"Startdaten laden"}</button></div></div></div></div>}
+
+    <WorkdaysEditor workdays={workdays} api={api} showToast={showToast}/>
+    <VersEditor versicherungen={versicherungen} api={api} showToast={showToast}/>
 
     <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>App-Link für Nachrichten</h3></div><div className="card-b">
       <p className="muted mini" style={{marginTop:0}}>Die öffentliche Adresse dieser App (z. B. deine GitHub-Pages-URL). Sie wird in WhatsApp-/E-Mail-Nachrichten und PDF-Plänen mitgeschickt, damit Mitarbeiter bei Änderungen selbst reinschauen können.</p>
@@ -1090,7 +1265,7 @@ function Einstellungen({store}){
     <ListEditor title="Projekttypen" desc="Kategorien für Projekte (z. B. Versicherungen, Hagelcover)." skey="typen" items={typen} api={api} showToast={showToast}/>
 
     <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Datenbank-Update (falls Spalten fehlen)</h3></div><div className="card-b">
-      <p className="muted mini" style={{marginTop:0}}>Wenn du von einer früheren Version kommst und Fehler zu fehlenden Spalten (z. B. „alias") auftreten, führe dieses Skript einmalig im Supabase SQL-Editor aus:</p>
+      <p className="muted mini" style={{marginTop:0}}>Wenn du von einer früheren Version kommst und Fehler zu fehlenden Spalten (z. B. „versicherung", „projektrolle") auftreten, führe dieses Skript einmalig im Supabase SQL-Editor aus:</p>
       <div className="sql-box">{MIGRATION_SQL}</div>
       <button className="btn sm" onClick={()=>cp(MIGRATION_SQL)}>{copied===MIGRATION_SQL?"Kopiert ✓":"Update-SQL kopieren"}</button></div></div>
 
