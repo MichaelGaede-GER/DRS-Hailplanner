@@ -433,7 +433,7 @@ function App({sb,session}){
   const[roles,setRoles]=useState(DEFAULT_ROLES);const[einsatz,setEinsatz]=useState(DEFAULT_EINSATZ);
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
   const[workdays,setWorkdays]=useState(DEFAULT_WORKDAYS);const[versicherungen,setVersicherungen]=useState(DEFAULT_VERS);
-  const[awCapacity,setAwCapacity]=useState(0);
+  const[awCapacity,setAwCapacity]=useState(0);const[rolePlanung,setRolePlanung]=useState({});
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
@@ -456,6 +456,7 @@ function App({sb,session}){
       setWorkdays(Array.isArray(sm.workdays)&&sm.workdays.length?sm.workdays:DEFAULT_WORKDAYS);
       setVersicherungen(Array.isArray(sm.versicherungen)?sm.versicherungen:DEFAULT_VERS);
       setAwCapacity(Number(sm.aw_capacity)||0);
+      setRolePlanung(sm.role_planung&&typeof sm.role_planung==="object"&&!Array.isArray(sm.role_planung)?sm.role_planung:{});
       // Technikerplanung getrennt laden (Tabelle existiert evtl. noch nicht → tolerant)
       const t=await sb.from("tech_assignments").select("*");
       if(t.error){if(/relation|does not exist|schema cache|could not find/i.test(t.error.message||""))setSchemaWarn(true);setTechAssignments([]);}
@@ -504,7 +505,7 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
     async addTech(list){
       const rows=list.map(t=>techToDb({...t,createdBy:myEmail}));
@@ -537,7 +538,7 @@ function App({sb,session}){
       showToast("Startdaten geladen");reload();},
   };
 
-  const store={employees,projects,assignments,techAssignments,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,api,showToast,session,myEmail,reload,schemaWarn};
+  const store={employees,projects,assignments,techAssignments,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,api,showToast,session,myEmail,reload,schemaWarn};
 
   const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["tech","Technikerplanung",ICONS.tech],["proj","Projekte",ICONS.proj],
     ["emp","Mitarbeiter",ICONS.emp],["stat","Statistik",ICONS.stat],["set","Einstellungen",ICONS.set]];
@@ -605,6 +606,11 @@ function workDaysOfWeek(monday,workdays){
   const wd=(workdays&&workdays.length?workdays:DEFAULT_WORKDAYS).slice().sort((a,b)=>a-b);
   return wd.map(i=>({idx:i,date:new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i)}));
 }
+function roleDefault(role){const r=(role||"").toLowerCase();const tech=r.includes("techn")||r.includes("monteur");
+  return tech?{woche:false,technik:true}:{woche:true,technik:false};}
+function planungFor(role,map){const m=map&&map[role];return m?{woche:!!m.woche,technik:!!m.technik}:roleDefault(role);}
+function showsInWeek(emp,map){return planungFor(emp.role,map).woche;}
+function showsInTech(emp,map){return planungFor(emp.role,map).technik;}
 
 function buildMessage(emp,a,projects,appUrl){
   const vn=emp?.name?.split(",")[1]?.trim()||emp?.name||"";
@@ -674,7 +680,7 @@ function Dashboard({store,go}){
 
 /* ============ WOCHENPLANUNG ============ */
 function Wochenplanung({store}){
-  const{employees,projects,assignments,api,appUrl,workdays,versicherungen}=store;
+  const{employees,projects,assignments,api,appUrl,workdays,versicherungen,rolePlanung}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
@@ -693,7 +699,7 @@ function Wochenplanung({store}){
     return true;
   }
   const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a));
-  const visibleEmployees=employees.filter(e=>!empQ||e.name.toLowerCase().includes(empQ.toLowerCase()));
+  const visibleEmployees=employees.filter(e=>showsInWeek(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveAssignment(dragId,empId,date);setDragId(null);setDropCell(null);}
   function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days);}
   const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
@@ -952,7 +958,7 @@ function buildTechMessage(emp,t,project,appUrl){
   return b;
 }
 function Technikerplanung({store}){
-  const{employees,projects,techAssignments,api,workdays,versicherungen,awCapacity}=store;
+  const{employees,projects,techAssignments,api,workdays,versicherungen,awCapacity,rolePlanung}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
@@ -966,8 +972,7 @@ function Technikerplanung({store}){
     if(versFilter&&t.versicherung!==versFilter)return false;
     return true;}
   const cellItems=(empId,date)=>techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t));
-  const isTech=e=>{const r=(e.role||"").toLowerCase();return r.includes("techn")||r.includes("monteur");};
-  const visibleEmployees=employees.filter(e=>isTech(e)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
+  const visibleEmployees=employees.filter(e=>showsInTech(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveTech(dragId,empId,date);setDragId(null);setDropCell(null);}
   const usedVers=versicherungen.filter(v=>v.active!==false);
   const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
@@ -998,7 +1003,7 @@ function Technikerplanung({store}){
         <option value="">Alle Versicherungen</option>{usedVers.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}</select>
       {(empQ||projFilter||versFilter)&&<button className="btn ghost sm" onClick={()=>{setEmpQ("");setProjFilter("");setVersFilter("");}}>Filter zurücksetzen</button>}
       <span className="spacer"></span>
-      <span className="mini muted">Nur Rollen „Techniker" / „Monteur"</span>
+      <span className="mini muted">Rollen für Technikerplanung (in Einstellungen festgelegt)</span>
       <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
         <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
     </div>
@@ -1031,8 +1036,8 @@ function Technikerplanung({store}){
           </div>);})}
       </React.Fragment>))}
     </div></div>
-    {visibleEmployees.length===0&&<div className="empty"><div className="big">Keine Techniker oder Monteure erfasst</div>
-      <div>Setze bei den betreffenden Personen unter „Mitarbeiter" die Rolle auf <b>Techniker</b> oder <b>Monteur</b>.</div></div>}
+    {visibleEmployees.length===0&&<div className="empty"><div className="big">Keine Personen für die Technikerplanung</div>
+      <div>Lege unter „Einstellungen → Rollen in der Planung" fest, welche Rollen hier erscheinen, und weise den Mitarbeitern die passende Rolle zu.</div></div>}
 
     {awRows.length>0&&<div className="card" style={{marginTop:16}}><div className="card-h"><h3>AW-Auslastung · KW {wk}</h3>
       {awCapacity>0?<span className="mini muted">Wochenkapazität je Techniker: {awCapacity} AW (in Einstellungen änderbar)</span>:<span className="mini muted">Tipp: Wochenkapazität in Einstellungen setzen für Auslastung in %</span>}</div>
@@ -1519,8 +1524,24 @@ function VersEditor({versicherungen,api,showToast}){
       <input value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Neue Versicherung…" style={{maxWidth:260}}/>
       <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Hinzufügen</button></div></div></div>);
 }
+function RolePlanungEditor({roles,employees,rolePlanung,api,showToast}){
+  const all=[...new Set([...(roles||[]),...employees.map(e=>e.role).filter(Boolean)])];
+  function setRP(role,patch){const cur=planungFor(role,rolePlanung);
+    const next={...(rolePlanung||{}),[role]:{...cur,...patch}};api.setSetting("role_planung",next);}
+  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Rollen in der Planung</h3></div><div className="card-b">
+    <p className="muted mini" style={{marginTop:0}}>Lege je Rolle fest, in welchem Planer die Personen erscheinen. So tauchen z. B. Techniker/Monteure nur in der Technikerplanung auf. Neue Rollen legst du unten unter „Rollen" an.</p>
+    <table><thead><tr><th>Rolle</th><th style={{width:150,textAlign:"center"}}>Wochenplanung</th><th style={{width:160,textAlign:"center"}}>Technikerplanung</th></tr></thead><tbody>
+      {all.map(r=>{const p=planungFor(r,rolePlanung);const cnt=employees.filter(e=>e.role===r).length;
+        return(<tr key={r}><td><b>{r}</b> <span className="mini muted">· {cnt}</span></td>
+          <td style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={p.woche} onChange={e=>setRP(r,{woche:e.target.checked})}/></td>
+          <td style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={p.technik} onChange={e=>setRP(r,{technik:e.target.checked})}/></td></tr>);})}
+      {all.length===0&&<tr><td colSpan="3" className="muted mini">Noch keine Rollen angelegt.</td></tr>}
+    </tbody></table>
+    <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Standard ohne Häkchen: Rollen mit „Techniker"/„Monteur" → Technikerplanung, alle anderen → Wochenplanung. Eine Rolle darf auch in beiden erscheinen.</p>
+  </div></div>);
+}
 function Einstellungen({store}){
-  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,api,showToast,employees,projects,assignments}=store;
+  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,api,showToast,employees,projects,assignments}=store;
   const[seeding,setSeeding]=useState(false);const[urlVal,setUrlVal]=useState(appUrl);const[copied,setCopied]=useState("");
   const[awVal,setAwVal]=useState(awCapacity||0);
   function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,exported:new Date().toISOString()};
@@ -1550,7 +1571,8 @@ function Einstellungen({store}){
       <div className="flex"><input value={urlVal} onChange={e=>setUrlVal(e.target.value)} placeholder="https://deinname.github.io/personalplan/" style={{maxWidth:420}}/>
         <button className="btn primary sm" onClick={()=>{api.setSetting("app_url",urlVal.trim());showToast("App-Link gespeichert");}}>Speichern</button></div></div></div>
 
-    <ListEditor title="Rollen" desc="Rollen für Mitarbeiter – frei definierbar (z. B. Projektleiter, Projektassistenz)." skey="roles" items={roles} api={api} showToast={showToast}/>
+    <ListEditor title="Rollen" desc="Rollen für Mitarbeiter – frei definierbar (z. B. Projektleiter, Projektassistenz, Techniker, Monteur)." skey="roles" items={roles} api={api} showToast={showToast}/>
+    <RolePlanungEditor roles={roles} employees={employees} rolePlanung={rolePlanung} api={api} showToast={showToast}/>
     <ListEditor title="Einsatzstatus / Tätigkeiten" desc="Was ein Mitarbeiter im Projekt macht (z. B. Begutachtung, Projektleitung)." skey="einsatz" items={einsatz} api={api} showToast={showToast}/>
     <ListEditor title="Projekttypen" desc="Kategorien für Projekte (z. B. Versicherungen, Hagelcover)." skey="typen" items={typen} api={api} showToast={showToast}/>
 
