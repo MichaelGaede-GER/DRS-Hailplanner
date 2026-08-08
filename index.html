@@ -68,6 +68,7 @@ thead th{text-align:left;padding:10px 12px;font-size:11.5px;font-weight:600;colo
   letter-spacing:.4px;border-bottom:1px solid var(--line);background:var(--panel2);position:sticky;top:0}
 tbody td{padding:10px 12px;border-bottom:1px solid var(--line)}
 tbody tr:hover{background:var(--panel2)}
+tr.clickrow{cursor:pointer}
 .tbl-wrap{overflow:auto;max-height:calc(100vh - 220px);border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
 .badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;white-space:nowrap}
 .b-blue{background:var(--brand-l);color:var(--brand-d)}.b-green{background:var(--green-l);color:var(--green)}
@@ -161,8 +162,8 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const HARDCODED_URL="__SUPABASE_URL__";
-const HARDCODED_KEY="__SUPABASE_ANON_KEY__";
+const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
+const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
 function getConfig(){
   const url=(HARDCODED_URL.startsWith("https://")?HARDCODED_URL:null)||localStorage.getItem("pms_sb_url");
   const key=(HARDCODED_KEY.length>60?HARDCODED_KEY:null)||localStorage.getItem("pms_sb_key");
@@ -375,8 +376,10 @@ function App({sb,session}){
   const[assignments,setAssignments]=useState([]);
   const[roles,setRoles]=useState(DEFAULT_ROLES);const[einsatz,setEinsatz]=useState(DEFAULT_EINSATZ);
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
-  const[toast,showToast]=useToast();
+  const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
+  const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
+    if(/column|schema cache|could not find/i.test(m))setSchemaWarn(true);showToast("Fehler: "+m);return false;};
 
   async function reload(){
     setLoading(true);setLoadErr("");
@@ -400,44 +403,44 @@ function App({sb,session}){
   const api={
     async saveEmployee(rec,isNew){
       if(isNew){const{data,error}=await sb.from("employees").insert({name:rec.name,email:rec.email,phone:rec.phone,role:rec.role}).select().single();
-        if(error)return showToast("Fehler: "+error.message);setEmployees(es=>[...es,data].sort((a,b)=>a.name.localeCompare(b.name)));showToast("Mitarbeiter angelegt");}
+        if(error)return fail(error);setEmployees(es=>[...es,data].sort((a,b)=>a.name.localeCompare(b.name)));showToast("Mitarbeiter angelegt");return true;}
       else{const{error}=await sb.from("employees").update({name:rec.name,email:rec.email,phone:rec.phone,role:rec.role}).eq("id",rec.id);
-        if(error)return showToast("Fehler: "+error.message);setEmployees(es=>es.map(e=>e.id===rec.id?{...e,...rec}:e).sort((a,b)=>a.name.localeCompare(b.name)));showToast("Gespeichert");}},
+        if(error)return fail(error);setEmployees(es=>es.map(e=>e.id===rec.id?{...e,...rec}:e).sort((a,b)=>a.name.localeCompare(b.name)));showToast("Gespeichert");return true;}},
     async deleteEmployee(id){const{error}=await sb.from("employees").delete().eq("id",id);
-      if(error)return showToast("Fehler: "+error.message);setEmployees(es=>es.filter(e=>e.id!==id));setAssignments(as=>as.filter(a=>a.employeeId!==id));showToast("Mitarbeiter gelöscht");},
+      if(error)return fail(error);setEmployees(es=>es.filter(e=>e.id!==id));setAssignments(as=>as.filter(a=>a.employeeId!==id));showToast("Mitarbeiter gelöscht");return true;},
     async saveProject(rec,isNew){
-      if(isNew){const{error}=await sb.from("projects").insert(projToDb(rec));if(error)return showToast("Fehler: "+error.message);setProjects(ps=>[rec,...ps]);showToast("Projekt angelegt");}
-      else{const{error}=await sb.from("projects").update(projToDb(rec)).eq("nr",rec.nr);if(error)return showToast("Fehler: "+error.message);setProjects(ps=>ps.map(p=>p.nr===rec.nr?rec:p));showToast("Projekt gespeichert");}},
-    async deleteProject(nr){const{error}=await sb.from("projects").delete().eq("nr",nr);if(error)return showToast("Fehler: "+error.message);setProjects(ps=>ps.filter(p=>p.nr!==nr));showToast("Projekt gelöscht");},
+      if(isNew){const{error}=await sb.from("projects").insert(projToDb(rec));if(error)return fail(error);setProjects(ps=>[rec,...ps]);showToast("Projekt angelegt");return true;}
+      else{const{error}=await sb.from("projects").update(projToDb(rec)).eq("nr",rec.nr);if(error)return fail(error);setProjects(ps=>ps.map(p=>p.nr===rec.nr?rec:p));showToast("Projekt gespeichert");return true;}},
+    async deleteProject(nr){const{error}=await sb.from("projects").delete().eq("nr",nr);if(error)return fail(error);setProjects(ps=>ps.filter(p=>p.nr!==nr));showToast("Projekt gelöscht");return true;},
     async upsertProjects(newList,updateList){
       const all=[...newList,...updateList];if(!all.length)return{add:0,upd:0};
-      const{error}=await sb.from("projects").upsert(all.map(projToDb),{onConflict:"nr"});if(error){showToast("Fehler: "+error.message);return null;}
+      const{error}=await sb.from("projects").upsert(all.map(projToDb),{onConflict:"nr"});if(error){fail(error);return null;}
       setProjects(ps=>{let out=[...ps];newList.forEach(it=>out.unshift(it));updateList.forEach(it=>{out=out.map(p=>p.nr===it.nr?{...p,...it}:p);});return out;});
       return{add:newList.length,upd:updateList.length};},
     async addAssignments(list){
       const rows=list.map(a=>asgToDb({...a,createdBy:myEmail}));
       const{data,error}=await sb.from("assignments").insert(rows).select();
-      if(error)return showToast("Fehler: "+error.message);
+      if(error)return fail(error);
       setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);
-      showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");},
+      showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");return true;},
     async updateAssignment(rec){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
-      if(error)return showToast("Fehler: "+error.message);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");},
-    async deleteAssignment(id){const{error}=await sb.from("assignments").delete().eq("id",id);if(error)return showToast("Fehler: "+error.message);setAssignments(as=>as.filter(a=>a.id!==id));showToast("Einsatz gelöscht");},
+      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");return true;},
+    async deleteAssignment(id){const{error}=await sb.from("assignments").delete().eq("id",id);if(error)return fail(error);setAssignments(as=>as.filter(a=>a.id!==id));showToast("Einsatz gelöscht");return true;},
     async moveAssignment(id,employeeId,date){const{error}=await sb.from("assignments").update({employee_id:employeeId,date}).eq("id",id);
-      if(error)return showToast("Fehler: "+error.message);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId,date}:a));},
+      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId,date}:a));return true;},
     async handOver(id,newEmpId,name){const{error}=await sb.from("assignments").update({employee_id:newEmpId}).eq("id",id);
-      if(error)return showToast("Fehler: "+error.message);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId:newEmpId}:a));showToast("Übergeben an "+name);},
+      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId:newEmpId}:a));showToast("Übergeben an "+name);return true;},
     async copyWeek(sourceDates){
       const src=assignments.filter(a=>sourceDates.includes(a.date));
-      if(!src.length)return showToast("Keine Einsätze zum Kopieren");
+      if(!src.length){showToast("Keine Einsätze zum Kopieren");return false;}
       const rows=src.map(a=>asgToDb({employeeId:a.employeeId,date:addDaysYMD(a.date,7),type:a.type,projectNrs:a.projectNrs,
         einsatz:a.einsatz,title:a.title,ort:a.ort,allDay:a.allDay,startTime:a.startTime,endTime:a.endTime,note:a.note,createdBy:myEmail}));
       const{data,error}=await sb.from("assignments").insert(rows).select();
-      if(error)return showToast("Fehler: "+error.message);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");},
+      if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
       const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl}[key];if(setter)setter(value);
-      const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)showToast("Fehler: "+error.message);},
+      const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
     async seed(){
       const existing=new Set(employees.map(e=>e.name));
       const toAdd=SEED.employees.filter(n=>!existing.has(n)).map((n,i)=>({name:n,email:"",phone:"",role:n.includes("SPM")?"Projektleiter":(i%4===0?"Projektleiter":"Techniker")}));
@@ -447,7 +450,7 @@ function App({sb,session}){
       showToast("Startdaten geladen");reload();},
   };
 
-  const store={employees,projects,assignments,roles,einsatz,typen,appUrl,api,showToast,session,myEmail,reload};
+  const store={employees,projects,assignments,roles,einsatz,typen,appUrl,api,showToast,session,myEmail,reload,schemaWarn};
 
   const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["proj","Projekte",ICONS.proj],
     ["emp","Mitarbeiter",ICONS.emp],["stat","Statistik",ICONS.stat],["set","Einstellungen",ICONS.set]];
@@ -462,6 +465,13 @@ function App({sb,session}){
         <button className="btn sm" onClick={()=>sb.auth.signOut()}><Ic d={ICONS.logout}/> Abmelden</button></div>
     </div>
     <div className={"page"+(tab==="week"?" wide":"")}>
+      {schemaWarn&&<div className="card" style={{marginBottom:16,borderColor:"var(--red)",borderWidth:2}}><div className="card-b">
+        <div style={{fontWeight:700,color:"var(--red)",marginBottom:6}}>⚠ Datenbank muss aktualisiert werden</div>
+        <p className="mini" style={{marginTop:0}}>Beim Speichern fehlen Spalten (z. B. <b>alias</b>, <b>adresse</b>). Führe dieses Skript einmalig im Supabase <b>SQL-Editor</b> aus, dann klappt das Bearbeiten. Danach diese Seite neu laden.</p>
+        <div className="sql-box">{MIGRATION_SQL}</div>
+        <div className="flex"><button className="btn sm" onClick={()=>{navigator.clipboard.writeText(MIGRATION_SQL);showToast("SQL kopiert");}}>Update-SQL kopieren</button>
+          <button className="btn sm" onClick={()=>window.location.reload()}>Neu laden</button>
+          <button className="btn ghost sm" onClick={()=>setSchemaWarn(false)}>Ausblenden</button></div></div></div>}
       {loading?<div className="spin"></div>:
        loadErr?<div className="card"><div className="card-b"><div className="err">Fehler beim Laden: {loadErr}</div>
          <button className="btn" onClick={reload}>Erneut versuchen</button>
@@ -631,20 +641,27 @@ function AssignModal({store,ctx,onClose}){
   const filtered=activeProjects.filter(p=>!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q));
   function toggleProj(nr){setSelProjects(s=>s.includes(nr)?s.filter(x=>x!==nr):[...s,nr]);}
 
-  function submit(){
+  async function submit(){
     if(mode==="project"&&selProjects.length===0){store.showToast("Bitte mindestens ein Projekt wählen");return;}
     if(mode==="frei"&&!title.trim()){store.showToast("Bitte Titel eingeben");return;}
     const base={employeeId:ctx.employeeId,type:mode,projectNrs:mode==="project"?selProjects:[],
       einsatz:mode==="project"?eins:null,title:mode==="frei"?title.trim():null,ort,note,allDay,
       startTime:allDay?null:startTime,endTime:allDay?null:endTime};
-    if(ed){api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy});}
-    else{const dates=datesBetween(fromDate>toDate?toDate:fromDate,fromDate>toDate?fromDate:toDate);
-      api.addAssignments(dates.map(d=>({...base,date:d})));}
-    onClose();
+    const lo=fromDate>toDate?toDate:fromDate, hi=fromDate>toDate?fromDate:toDate;
+    if(ed){
+      const ok=await api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy});
+      if(!ok)return;
+      const extra=datesBetween(lo,hi).filter(d=>d!==ctx.date);
+      if(extra.length)await api.addAssignments(extra.map(d=>({...base,date:d})));
+      onClose();
+    }else{
+      const dates=datesBetween(lo,hi);
+      if(await api.addAssignments(dates.map(d=>({...base,date:d}))))onClose();
+    }
   }
-  function del(){api.deleteAssignment(ed.id);onClose();}
-  function doHandover(){if(!handTo)return;const tgt=employees.find(e=>e.id===handTo);
-    api.handOver(ed.id,handTo,tgt?.name||"");onClose();}
+  async function del(){if(await api.deleteAssignment(ed.id))onClose();}
+  async function doHandover(){if(!handTo)return;const tgt=employees.find(e=>e.id===handTo);
+    if(await api.handOver(ed.id,handTo,tgt?.name||""))onClose();}
 
   const previewA={date:ctx.date,type:mode,projectNrs:selProjects,einsatz:eins,title,ort,note,allDay,startTime,endTime};
   const msg=buildMessage(emp,previewA,projects,appUrl);
@@ -662,10 +679,12 @@ function AssignModal({store,ctx,onClose}){
       <button className={mode==="project"?"active":""} onClick={()=>setMode("project")}>Projekteinsatz</button>
       <button className={mode==="frei"?"active":""} onClick={()=>setMode("frei")}>Freier Termin</button></div>
 
-    {!ed&&<div className="row2"><div className="field"><label>Von</label>
+    <div className="row2"><div className="field"><label>{ed?"Zeitraum – von":"Von"}</label>
         <input type="date" value={fromDate} onChange={e=>{setFromDate(e.target.value);if(e.target.value>toDate)setToDate(e.target.value);}}/></div>
-      <div className="field"><label>Bis (für ganze Woche „von–bis")</label>
-        <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>}
+      <div className="field"><label>{ed?"bis (legt weitere Tage an)":"Bis (für ganze Woche „von–bis\")"}</label>
+        <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>
+    {ed&&(fromDate!==ctx.date||toDate!==ctx.date)&&<div className="mini muted" style={{marginTop:-6,marginBottom:12}}>
+      Der aktuelle Eintrag ({fmtDE(ctx.date)}) wird gespeichert; für die übrigen Tage im Bereich werden zusätzliche Einträge mit denselben Angaben angelegt.</div>}
 
     {mode==="project"?<>
       <div className="field"><label>Projekt(e) suchen</label>
@@ -820,7 +839,7 @@ function Projekte({store}){
     <div className="tbl-wrap"><table><thead><tr>
       <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Adresse</th><th>Leiter</th>
       <th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
-      {filtered.map(p=>(<tr key={p.nr}>
+      {filtered.map(p=>(<tr key={p.nr} className="clickrow" onClick={()=>setEdit(p)} title="Zum Bearbeiten klicken">
         <td style={{fontWeight:600}}>{p.nr}</td><td>{p.name}</td>
         <td>{p.alias?<span className="badge b-blue">{p.alias}</span>:<span className="muted">—</span>}</td>
         <td><span className="badge b-gray">{p.typ}</span></td>
@@ -829,8 +848,9 @@ function Projekte({store}){
         <td><div className="flex"><div className="progress"><div style={{width:Math.round((p.fortschritt||0)*100)+"%"}}></div></div>
           <span className="mini">{Math.round((p.fortschritt||0)*100)}%</span></div></td>
         <td><span className={"badge "+(STATUS_COLORS[p.status]||"b-gray")}>{p.status}</span></td>
-        <td><div className="flex"><button className="btn ghost sm" onClick={()=>setEdit(p)}><Ic d={ICONS.edit}/></button>
-          <button className="btn ghost sm" onClick={()=>delProj(p.nr)}><Ic d={ICONS.trash}/></button></div></td></tr>))}
+        <td onClick={e=>e.stopPropagation()}><div className="flex">
+          <button className="btn sm" onClick={()=>setEdit(p)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
+          <button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>))}
       {filtered.length===0&&<tr><td colSpan="9"><div className="empty"><div className="big">Keine Projekte</div>
         <div>Lege eins an oder lade die Startdaten in den Einstellungen.</div></div></td></tr>}
     </tbody></table></div>
@@ -847,14 +867,14 @@ function ProjectEdit({store,proj,onClose}){
     gesellschaft:proj.gesellschaft||"DRS Hagelschaden",umsatz:proj.umsatz||0,technikerkosten:proj.technikerkosten||0});
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
   const allStatus=["Vorbereitung","Begutachtung","Reparatur","Finance","Beendet","fiktiv"];
-  function submit(){
+  async function submit(){
     if(!f.nr.trim()){store.showToast("Projekt-Nr erforderlich");return;}
     if(isNew&&projects.some(p=>p.nr===f.nr.trim())){store.showToast("Nr existiert bereits");return;}
     const rec={...proj,nr:f.nr.trim(),name:f.name.trim(),alias:f.alias.trim(),typ:f.typ,adresse:f.adresse.trim(),
       leiter:f.leiter.split("\n").map(x=>x.trim()).filter(Boolean),startdatum:f.startdatum||null,enddatum:f.enddatum||null,
       fortschritt:(parseFloat(f.fortschritt)||0)/100,status:f.status,gesellschaft:f.gesellschaft,
       umsatz:parseFloat(f.umsatz)||0,technikerkosten:parseFloat(f.technikerkosten)||0};
-    api.saveProject(rec,isNew);onClose();}
+    if(await api.saveProject(rec,isNew))onClose();}
   return(<Modal title={isNew?"Neues Projekt":"Projekt bearbeiten"} onClose={onClose} wide
     footer={<><button className="btn" onClick={onClose}>Abbrechen</button><button className="btn primary" onClick={submit}>{isNew?"Anlegen":"Speichern"}</button></>}>
     <div className="row2">
@@ -971,11 +991,12 @@ function Mitarbeiter({store}){
       <span className="spacer"></span><span className="mini muted">{filtered.length} Mitarbeiter</span>
       <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neuer Mitarbeiter</button></div>
     <div className="tbl-wrap"><table><thead><tr><th>Name</th><th>Rolle</th><th>E-Mail</th><th>Telefon</th><th></th></tr></thead><tbody>
-      {filtered.map(e=>(<tr key={e.id}>
+      {filtered.map(e=>(<tr key={e.id} className="clickrow" onClick={()=>setEdit(e)} title="Zum Bearbeiten klicken">
         <td style={{fontWeight:600}}>{e.name}</td><td><span className="badge b-blue">{e.role||"–"}</span></td>
         <td className="mini">{e.email||<span className="muted">—</span>}</td><td className="mini">{e.phone||<span className="muted">—</span>}</td>
-        <td><div className="flex"><button className="btn ghost sm" onClick={()=>setEdit(e)}><Ic d={ICONS.edit}/></button>
-          <button className="btn ghost sm" onClick={()=>delEmp(e.id)}><Ic d={ICONS.trash}/></button></div></td></tr>))}
+        <td onClick={ev=>ev.stopPropagation()}><div className="flex">
+          <button className="btn sm" onClick={()=>setEdit(e)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
+          <button className="btn ghost sm" onClick={()=>delEmp(e.id)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>))}
       {filtered.length===0&&<tr><td colSpan="5"><div className="empty"><div className="big">Keine Mitarbeiter</div></div></td></tr>}
     </tbody></table></div>
     {edit&&<EmpEdit store={store} emp={edit} onClose={()=>setEdit(null)}/>}
@@ -985,8 +1006,8 @@ function EmpEdit({store,emp,onClose}){
   const{roles,api}=store;const isNew=!emp.id;
   const[f,setF]=useState({name:emp.name||"",email:emp.email||"",phone:emp.phone||"",role:emp.role||roles[0]||""});
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
-  function submit(){if(!f.name.trim()){store.showToast("Name erforderlich");return;}
-    api.saveEmployee({id:emp.id,name:f.name.trim(),email:f.email.trim(),phone:f.phone.trim(),role:f.role},isNew);onClose();}
+  async function submit(){if(!f.name.trim()){store.showToast("Name erforderlich");return;}
+    if(await api.saveEmployee({id:emp.id,name:f.name.trim(),email:f.email.trim(),phone:f.phone.trim(),role:f.role},isNew))onClose();}
   return(<Modal title={isNew?"Neuer Mitarbeiter":"Mitarbeiter bearbeiten"} onClose={onClose}
     footer={<><button className="btn" onClick={onClose}>Abbrechen</button><button className="btn primary" onClick={submit}>{isNew?"Anlegen":"Speichern"}</button></>}>
     <div className="field"><label>Name (Nachname, Vorname)</label><input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="Mustermann, Max"/></div>
