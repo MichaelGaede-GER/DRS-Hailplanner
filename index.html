@@ -196,14 +196,25 @@ create table if not exists assignments (
 
 create table if not exists settings (key text primary key, value jsonb);
 
+create table if not exists tech_assignments (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid references employees(id) on delete cascade,
+  project_nr text, autohaus text default '', date date not null,
+  all_day boolean default true, start_time text, end_time text, dauer text default '',
+  adresse text default '', versicherung text default '',
+  vehicles jsonb default '[]'::jsonb, note text default '',
+  send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
+
 alter table employees enable row level security;
 alter table projects enable row level security;
 alter table assignments enable row level security;
 alter table settings enable row level security;
+alter table tech_assignments enable row level security;
 create policy "auth all" on employees   for all to authenticated using (true) with check (true);
 create policy "auth all" on projects    for all to authenticated using (true) with check (true);
 create policy "auth all" on assignments for all to authenticated using (true) with check (true);
-create policy "auth all" on settings    for all to authenticated using (true) with check (true);`;
+create policy "auth all" on settings    for all to authenticated using (true) with check (true);
+create policy "auth all" on tech_assignments for all to authenticated using (true) with check (true);`;
 const MIGRATION_SQL=`-- Update-Skript (nur falls die Tabellen aus einer früheren Version schon existieren)
 alter table projects    add column if not exists alias text default '';
 alter table projects    add column if not exists adresse text default '';
@@ -215,7 +226,20 @@ alter table assignments add column if not exists start_time text;
 alter table assignments add column if not exists end_time text;
 alter table assignments add column if not exists created_by text;
 alter table assignments add column if not exists adresse text;
-alter table assignments add column if not exists projektrolle text;`;
+alter table assignments add column if not exists projektrolle text;
+-- Technikerplanung (Phase 2):
+create table if not exists tech_assignments (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid references employees(id) on delete cascade,
+  project_nr text, autohaus text default '', date date not null,
+  all_day boolean default true, start_time text, end_time text, dauer text default '',
+  adresse text default '', versicherung text default '',
+  vehicles jsonb default '[]'::jsonb, note text default '',
+  send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
+alter table tech_assignments enable row level security;
+do $$ begin
+  create policy "auth all" on tech_assignments for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;`;
 
 /* ============ Seed & constants ============ */
 const SEED=JSON.parse(document.getElementById('seed-data').textContent);
@@ -271,6 +295,15 @@ const asgFromDb=r=>({id:r.id,employeeId:r.employee_id,date:r.date,type:r.type,
   projectNrs:(r.project_nrs&&r.project_nrs.length)?r.project_nrs:(r.project_nr?[r.project_nr]:[]),
   einsatz:r.einsatz,title:r.title,ort:r.ort,allDay:r.all_day!==false,startTime:r.start_time,
   endTime:r.end_time,note:r.note,createdBy:r.created_by,adresse:r.adresse||"",projektrolle:r.projektrolle||""});
+const techToDb=t=>({employee_id:t.employeeId,project_nr:t.projectNr||null,autohaus:t.autohaus||"",date:t.date,
+  all_day:t.allDay!==false,start_time:t.allDay===false?(t.startTime||null):null,end_time:t.allDay===false?(t.endTime||null):null,
+  dauer:t.dauer||"",adresse:t.adresse||"",versicherung:t.versicherung||"",vehicles:t.vehicles||[],
+  note:t.note||"",send_log:t.sendLog||[],created_by:t.createdBy||null});
+const techFromDb=r=>({id:r.id,employeeId:r.employee_id,projectNr:r.project_nr||"",autohaus:r.autohaus||"",date:r.date,
+  allDay:r.all_day!==false,startTime:r.start_time,endTime:r.end_time,dauer:r.dauer||"",adresse:r.adresse||"",
+  versicherung:r.versicherung||"",vehicles:r.vehicles||[],note:r.note||"",sendLog:r.send_log||[],createdBy:r.created_by});
+const awSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
+const awDoneSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.awDone)||0),0);
 
 /* ============ Icons ============ */
 const Ic=({d,...p})=>(<svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -298,6 +331,8 @@ const ICONS={
   pin:"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0zM12 10a3 3 0 100-6 3 3 0 000 6z",
   clock:"M12 22a10 10 0 100-20 10 10 0 000 20zM12 6v6l4 2",
   swap:"M17 1l4 4-4 4M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 01-4 4H3",
+  tech:"M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z",
+  car:"M5 11l1.5-4.5A2 2 0 018.4 5h7.2a2 2 0 011.9 1.5L19 11m-14 0h14m-14 0a2 2 0 00-2 2v3h2m14-5a2 2 0 012 2v3h-2m-2 0H7m10 0v2m-10-2v2M7 14h.01M17 14h.01",
 };
 
 function useToast(){const[t,setT]=useState(null);
@@ -394,9 +429,11 @@ function App({sb,session}){
   const[loading,setLoading]=useState(true);const[loadErr,setLoadErr]=useState("");
   const[employees,setEmployees]=useState([]);const[projects,setProjects]=useState([]);
   const[assignments,setAssignments]=useState([]);
+  const[techAssignments,setTechAssignments]=useState([]);
   const[roles,setRoles]=useState(DEFAULT_ROLES);const[einsatz,setEinsatz]=useState(DEFAULT_EINSATZ);
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
   const[workdays,setWorkdays]=useState(DEFAULT_WORKDAYS);const[versicherungen,setVersicherungen]=useState(DEFAULT_VERS);
+  const[awCapacity,setAwCapacity]=useState(0);
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
@@ -418,6 +455,11 @@ function App({sb,session}){
       setTypen(sm.typen||DEFAULT_TYPEN);setAppUrl(sm.app_url||"");
       setWorkdays(Array.isArray(sm.workdays)&&sm.workdays.length?sm.workdays:DEFAULT_WORKDAYS);
       setVersicherungen(Array.isArray(sm.versicherungen)?sm.versicherungen:DEFAULT_VERS);
+      setAwCapacity(Number(sm.aw_capacity)||0);
+      // Technikerplanung getrennt laden (Tabelle existiert evtl. noch nicht → tolerant)
+      const t=await sb.from("tech_assignments").select("*");
+      if(t.error){if(/relation|does not exist|schema cache|could not find/i.test(t.error.message||""))setSchemaWarn(true);setTechAssignments([]);}
+      else setTechAssignments((t.data||[]).map(techFromDb));
     }catch(err){setLoadErr(err.message||"Ladefehler");}
     setLoading(false);
   }
@@ -462,8 +504,30 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
+    async addTech(list){
+      const rows=list.map(t=>techToDb({...t,createdBy:myEmail}));
+      const{data,error}=await sb.from("tech_assignments").insert(rows).select();
+      if(error)return fail(error);setTechAssignments(ts=>[...ts,...(data||[]).map(techFromDb)]);
+      showToast(list.length>1?(list.length+" Technikertermine angelegt"):"Technikertermin angelegt");return true;},
+    async updateTech(rec){
+      const{error}=await sb.from("tech_assignments").update(techToDb(rec)).eq("id",rec.id);
+      if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===rec.id?rec:t));showToast("Technikertermin aktualisiert");return true;},
+    async deleteTech(id){const{error}=await sb.from("tech_assignments").delete().eq("id",id);if(error)return fail(error);setTechAssignments(ts=>ts.filter(t=>t.id!==id));showToast("Technikertermin gelöscht");return true;},
+    async moveTech(id,employeeId,date){const{error}=await sb.from("tech_assignments").update({employee_id:employeeId,date}).eq("id",id);
+      if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===id?{...t,employeeId,date}:t));return true;},
+    async logTechSend(id,channel){
+      const cur=techAssignments.find(t=>t.id===id);if(!cur)return false;
+      const sendLog=[...(cur.sendLog||[]),{ts:new Date().toISOString(),channel,by:myEmail}];
+      const{error}=await sb.from("tech_assignments").update({send_log:sendLog}).eq("id",id);
+      if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===id?{...t,sendLog}:t));return true;},
+    async copyTechWeek(sourceDates){
+      const src=techAssignments.filter(t=>sourceDates.includes(t.date));
+      if(!src.length){showToast("Keine Technikertermine zum Kopieren");return false;}
+      const rows=src.map(t=>techToDb({...t,date:addDaysYMD(t.date,7),sendLog:[],createdBy:myEmail}));
+      const{data,error}=await sb.from("tech_assignments").insert(rows).select();
+      if(error)return fail(error);setTechAssignments(ts=>[...ts,...(data||[]).map(techFromDb)]);showToast(src.length+" Termine in Folgewoche kopiert");return true;},
     async seed(){
       const existing=new Set(employees.map(e=>e.name));
       const toAdd=SEED.employees.filter(n=>!existing.has(n)).map((n,i)=>({name:n,email:"",phone:"",role:n.includes("SPM")?"Projektleiter":(i%4===0?"Projektleiter":"Techniker")}));
@@ -473,9 +537,9 @@ function App({sb,session}){
       showToast("Startdaten geladen");reload();},
   };
 
-  const store={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,api,showToast,session,myEmail,reload,schemaWarn};
+  const store={employees,projects,assignments,techAssignments,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,api,showToast,session,myEmail,reload,schemaWarn};
 
-  const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["proj","Projekte",ICONS.proj],
+  const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["tech","Technikerplanung",ICONS.tech],["proj","Projekte",ICONS.proj],
     ["emp","Mitarbeiter",ICONS.emp],["stat","Statistik",ICONS.stat],["set","Einstellungen",ICONS.set]];
 
   return(<div>
@@ -487,7 +551,7 @@ function App({sb,session}){
         <span style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis"}}>{session.user.email}</span>
         <button className="btn sm" onClick={()=>sb.auth.signOut()}><Ic d={ICONS.logout}/> Abmelden</button></div>
     </div>
-    <div className={"page"+(tab==="week"?" wide":"")}>
+    <div className={"page"+((tab==="week"||tab==="tech")?" wide":"")}>
       {schemaWarn&&<div className="card" style={{marginBottom:16,borderColor:"var(--red)",borderWidth:2}}><div className="card-b">
         <div style={{fontWeight:700,color:"var(--red)",marginBottom:6}}>⚠ Datenbank muss aktualisiert werden</div>
         <p className="mini" style={{marginTop:0}}>Beim Speichern fehlen Spalten (z. B. <b>alias</b>, <b>adresse</b>). Führe dieses Skript einmalig im Supabase <b>SQL-Editor</b> aus, dann klappt das Bearbeiten. Danach diese Seite neu laden.</p>
@@ -501,6 +565,7 @@ function App({sb,session}){
          <p className="mini muted" style={{marginTop:10}}>Falls Spalten fehlen (z. B. „alias"), führe das Update-Skript unter Einstellungen aus.</p></div></div>:<>
         {tab==="dash"&&<Dashboard store={store} go={setTab}/>}
         {tab==="week"&&<Wochenplanung store={store}/>}
+        {tab==="tech"&&<Technikerplanung store={store}/>}
         {tab==="proj"&&<Projekte store={store}/>}
         {tab==="emp"&&<Mitarbeiter store={store}/>}
         {tab==="stat"&&<Statistik store={store}/>}
@@ -862,6 +927,224 @@ function SendModal({store,onClose}){
           <a className="btn sm primary" href={e.email?mailLink(e.email,"Dein Einsatzplan KW "+wk,msg):undefined}
              style={e.email?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.mail}/></a>
         </div>);})}
+  </Modal>);
+}
+
+/* ============ TECHNIKERPLANUNG ============ */
+function techColor(t,versicherungen){const v=(versicherungen||[]).find(x=>x.name===t.versicherung);return v?v.color:"var(--teal)";}
+function fmtAW(n){return (Math.round(n*10)/10).toString();}
+function buildTechMessage(emp,t,project,appUrl){
+  const name=emp?(emp.name.split(",")[1]?.trim()||emp.name):"";
+  const when=t.allDay===false&&t.startTime?(fmtDE(t.date)+", "+t.startTime+(t.endTime?"–"+t.endTime+" Uhr":" Uhr")):(fmtDE(t.date)+" (ganztägig)");
+  let b="Einsatzplanung\n";
+  b+="Techniker: "+name+"\n";
+  b+="Projekt/Autohaus: "+(t.autohaus||project?.name||"-")+"\n";
+  b+="Datum: "+when+"\n";
+  if(t.dauer)b+="Einsatzdauer: "+t.dauer+"\n";
+  if(t.adresse)b+="Adresse:\n"+t.adresse+"\n";
+  const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);
+  if(veh.length){b+="Fahrzeug(e):\n";veh.forEach(v=>{const parts=[];if(v.kennzeichen)parts.push("Kennzeichen: "+v.kennzeichen);if(v.vin)parts.push("VIN: "+v.vin);if(v.aw)parts.push("AW: "+v.aw);b+="  - "+parts.join(" · ")+"\n";});}
+  const tot=awSum(t);if(tot)b+="Geplante AW gesamt: "+fmtAW(tot)+"\n";
+  if(t.versicherung)b+="Versicherung: "+t.versicherung+"\n";
+  if(t.note)b+="Bemerkung: "+t.note+"\n";
+  if(t.adresse)b+="Route: "+mapsLink(t.adresse)+"\n";
+  if(appUrl)b+="\nAktueller Plan: "+appUrl;
+  return b;
+}
+function Technikerplanung({store}){
+  const{employees,projects,techAssignments,api,workdays,versicherungen,awCapacity}=store;
+  const now=new Date();
+  const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
+  const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
+  const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");const[onlyTech,setOnlyTech]=useState(false);
+  const monday=mondayOfWeek(yr,wk);
+  const wdays=workDaysOfWeek(monday,workdays);const days=wdays.map(w=>w.date);const dayIdx=wdays.map(w=>w.idx);
+  const weekDates=days.map(ymd);
+  function nav(delta){let w=wk+delta,y=yr;if(w<1){y--;w=isoWeek(new Date(y,11,28));}else if(w>isoWeek(new Date(y,11,28))){y++;w=1;}setWk(w);setYr(y);}
+  function matchesFilter(t){
+    if(projFilter&&t.projectNr!==projFilter)return false;
+    if(versFilter&&t.versicherung!==versFilter)return false;
+    return true;}
+  const cellItems=(empId,date)=>techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t));
+  const visibleEmployees=employees.filter(e=>(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase()))&&(!onlyTech||(e.role||"").toLowerCase().includes("techn")));
+  function onDrop(empId,date){if(!dragId)return;api.moveTech(dragId,empId,date);setDragId(null);setDropCell(null);}
+  const usedVers=versicherungen.filter(v=>v.active!==false);
+  const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
+  // AW-Übersicht pro Techniker (diese Woche)
+  const awRows=visibleEmployees.map(e=>{const mine=techAssignments.filter(t=>t.employeeId===e.id&&weekDates.includes(t.date)&&matchesFilter(t));
+    const planned=mine.reduce((s,t)=>s+awSum(t),0);const done=mine.reduce((s,t)=>s+awDoneSum(t),0);
+    return{e,planned,done,count:mine.length};}).filter(r=>r.count>0).sort((a,b)=>b.planned-a.planned);
+  const weekPlanned=awRows.reduce((s,r)=>s+r.planned,0);
+
+  return(<div>
+    <div className="flex wrap" style={{marginBottom:12}}>
+      <button className="btn sm" onClick={()=>nav(-1)}><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
+      <div style={{fontWeight:700,fontSize:16,minWidth:180,textAlign:"center"}}>Technik · KW {wk} · {yr}
+        <div className="mini muted" style={{fontWeight:400}}>{fmtDEShort(days[0])} – {fmtDEShort(days[days.length-1])}</div></div>
+      <button className="btn sm" onClick={()=>nav(1)}><Ic d={ICONS.chev}/></button>
+      <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
+      <span className="spacer"></span>
+      <span className="badge b-teal" title="Geplante AW dieser Woche (sichtbare Techniker)">Σ AW Woche: {fmtAW(weekPlanned)}</span>
+      <button className="btn sm" onClick={()=>{if(confirm("Alle Technikertermine dieser Woche in die Folgewoche kopieren?"))api.copyTechWeek(weekDates);}}><Ic d={ICONS.copy}/> → Folgewoche</button>
+    </div>
+    <div className="flex wrap" style={{marginBottom:10,gap:8}}>
+      <div style={{position:"relative"}}>
+        <Ic d={ICONS.search} style={{position:"absolute",left:9,top:9,width:15,height:15,color:"var(--muted)"}}/>
+        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Techniker suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>
+      <select style={{width:"auto",padding:"7px 10px"}} value={projFilter} onChange={e=>setProjFilter(e.target.value)}>
+        <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
+      <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
+        <option value="">Alle Versicherungen</option>{usedVers.map(v=><option key={v.name} value={v.name}>{v.name}</option>)}</select>
+      <label className="flex mini" style={{gap:6,cursor:"pointer"}}><input type="checkbox" style={{width:"auto"}} checked={onlyTech} onChange={e=>setOnlyTech(e.target.checked)}/> nur Techniker</label>
+      {(empQ||projFilter||versFilter||onlyTech)&&<button className="btn ghost sm" onClick={()=>{setEmpQ("");setProjFilter("");setVersFilter("");setOnlyTech(false);}}>Filter zurücksetzen</button>}
+      <span className="spacer"></span>
+      <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
+        <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
+    </div>
+    <div className="week-scroll"><div className="week-grid" style={{gridTemplateColumns:"160px repeat("+days.length+",minmax(140px,1fr))"}}>
+      <div className="wg-emp corner">Techniker</div>
+      {days.map((d,i)=>(<div key={i} className={"wg-head"+(ymd(d)===todayYMD?" today":"")}>{DAYNAMES[dayIdx[i]]} {fmtDEShort(d)}</div>))}
+      {visibleEmployees.map(emp=>(<React.Fragment key={emp.id}>
+        <div className="wg-emp">{emp.name}</div>
+        {days.map((d,i)=>{const date=ymd(d);const items=cellItems(emp.id,date);const cellKey=emp.id+date;
+          const dayAW=items.reduce((s,t)=>s+awSum(t),0);
+          return(<div key={i}
+            className={"wg-cell wg-day"+(dayIdx[i]>=5?" weekend":"")+(date===todayYMD?" today":"")+(dropCell===cellKey?" drop-hover":"")}
+            onClick={e=>{if(e.target.closest(".chip"))return;setModal({employeeId:emp.id,date});}}
+            onDragOver={e=>{e.preventDefault();setDropCell(cellKey);}}
+            onDragLeave={()=>setDropCell(c=>c===cellKey?null:c)}
+            onDrop={e=>{e.preventDefault();onDrop(emp.id,date);}}>
+            {items.map(t=>{const p=projects.find(x=>x.nr===t.projectNr);const col=techColor(t,versicherungen);
+              const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);const aw=awSum(t);
+              const label=t.autohaus||(p?(p.alias||p.name):"Autohaus");
+              return(<div key={t.id} className="chip"
+                draggable onDragStart={()=>setDragId(t.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
+                style={{borderLeftColor:col}} title={label+(t.versicherung?"\nVersicherung: "+t.versicherung:"")+(aw?"\nAW: "+fmtAW(aw):"")+((t.sendLog||[]).length?"\nVersendet: "+t.sendLog.length+"x":"")}
+                onClick={e=>{e.stopPropagation();setModal({employeeId:emp.id,date,editing:t});}}>
+                <span className="cn">{label}</span>
+                <span className="cs">{[timeLabel(t),veh.length?veh.length+" Fzg":"",aw?fmtAW(aw)+" AW":""].filter(Boolean).join(" · ")}</span>
+                {(t.sendLog||[]).length>0&&<span className="cby">✓ versendet</span>}
+              </div>);})}
+            {items.length>0&&dayAW>0&&<div className="mini muted" style={{position:"absolute",bottom:2,right:5,fontSize:9}}>{fmtAW(dayAW)} AW</div>}
+            {items.length===0&&<div className="add-hint">+</div>}
+          </div>);})}
+      </React.Fragment>))}
+    </div></div>
+    {visibleEmployees.length===0&&<div className="empty"><div className="big">Kein Techniker gefunden</div></div>}
+
+    {awRows.length>0&&<div className="card" style={{marginTop:16}}><div className="card-h"><h3>AW-Auslastung · KW {wk}</h3>
+      {awCapacity>0?<span className="mini muted">Wochenkapazität je Techniker: {awCapacity} AW (in Einstellungen änderbar)</span>:<span className="mini muted">Tipp: Wochenkapazität in Einstellungen setzen für Auslastung in %</span>}</div>
+      <div className="card-b">
+        {awRows.map(r=>{const pct=awCapacity>0?Math.round(r.planned/awCapacity*100):0;
+          return(<div key={r.e.id} className="bar-row"><div className="name">{r.e.name}</div>
+            <div className="bar-track">
+              <div className="bar-seg" style={{background:"var(--teal)",width:(awCapacity>0?Math.min(100,pct):Math.min(100,r.planned/Math.max(1,weekPlanned)*100))+"%"}}>{fmtAW(r.planned)} AW</div>
+            </div>
+            <div style={{width:120,fontSize:12,textAlign:"right"}}>{awCapacity>0&&<b style={{color:pct>100?"var(--red)":"var(--text)"}}>{pct}% </b>}
+              {r.done>0&&<span className="muted">· {fmtAW(r.done)} erledigt</span>}</div></div>);})}
+      </div></div>}
+    {modal&&<TechModal store={store} ctx={modal} onClose={()=>setModal(null)}/>}
+  </div>);
+}
+
+function TechModal({store,ctx,onClose}){
+  const{projects,employees,versicherungen,api,appUrl,myEmail}=store;
+  const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
+  const activeProjects=projects.filter(p=>p.status!=="Beendet");
+  const[projectNr,setProjectNr]=useState(ed?.projectNr||"");
+  const[autohaus,setAutohaus]=useState(ed?.autohaus||"");
+  const[adresse,setAdresse]=useState(ed?.adresse||"");
+  const[versicherung,setVersicherung]=useState(ed?.versicherung||"");
+  const[dauer,setDauer]=useState(ed?.dauer||"");
+  const[note,setNote]=useState(ed?.note||"");
+  const[fromDate,setFromDate]=useState(ctx.date);const[toDate,setToDate]=useState(ctx.date);
+  const[allDay,setAllDay]=useState(ed?ed.allDay!==false:false);
+  const[startTime,setStartTime]=useState(ed?.startTime||"08:00");const[endTime,setEndTime]=useState(ed?.endTime||"17:00");
+  const[vehicles,setVehicles]=useState(ed?.vehicles&&ed.vehicles.length?ed.vehicles:[{kennzeichen:"",vin:"",aw:"",awDone:""}]);
+  const usedVers=versicherungen.filter(v=>v.active!==false);
+
+  function pickProject(nr){setProjectNr(nr);const p=projects.find(x=>x.nr===nr);
+    if(p){if(!autohaus)setAutohaus(p.alias||p.name);if(!adresse&&p.adresse)setAdresse(p.adresse);if(!versicherung&&p.versicherung)setVersicherung(p.versicherung);}}
+  function setVeh(i,patch){setVehicles(vs=>vs.map((v,idx)=>idx===i?{...v,...patch}:v));}
+  function addVeh(){setVehicles(vs=>[...vs,{kennzeichen:"",vin:"",aw:"",awDone:""}]);}
+  function rmVeh(i){setVehicles(vs=>vs.filter((_,idx)=>idx!==i));}
+
+  const cleanVehicles=vehicles.filter(v=>(v.kennzeichen||"").trim()||(v.vin||"").trim()||(v.aw!=="" &&v.aw!=null));
+  const base={employeeId:ctx.employeeId,projectNr,autohaus:autohaus.trim(),adresse:adresse.trim(),versicherung,dauer:dauer.trim(),
+    note:note.trim(),allDay,startTime:allDay?null:startTime,endTime:allDay?null:endTime,
+    vehicles:cleanVehicles.map(v=>({kennzeichen:(v.kennzeichen||"").trim(),vin:(v.vin||"").trim(),aw:v.aw===""?"":Number(v.aw),awDone:v.awDone===""?"":Number(v.awDone)}))};
+  const project=projects.find(p=>p.nr===projectNr);
+  const totalAW=base.vehicles.reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
+
+  async function submit(){
+    for(const v of base.vehicles){if(!v.kennzeichen&&!v.vin){store.showToast("Jedes Fahrzeug braucht Kennzeichen ODER VIN");return;}}
+    const lo=fromDate>toDate?toDate:fromDate,hi=fromDate>toDate?fromDate:toDate;
+    if(ed){const ok=await api.updateTech({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy,sendLog:ed.sendLog});if(!ok)return;
+      const extra=datesBetween(lo,hi).filter(d=>d!==ctx.date);
+      if(extra.length)await api.addTech(extra.map(d=>({...base,date:d})));onClose();}
+    else{const dates=datesBetween(lo,hi);if(await api.addTech(dates.map(d=>({...base,date:d}))))onClose();}
+  }
+  async function del(){if(await api.deleteTech(ed.id))onClose();}
+
+  const sendMsg=buildTechMessage(emp,{...base,date:ctx.date},project,appUrl);
+  const subj="Einsatzplanung "+(autohaus||project?.name||"")+" "+fmtDE(ctx.date);
+  const hasPhone=!!(emp?.phone||"").replace(/[^0-9]/g,"");
+  function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
+
+  return(<Modal title={(ed?"Technikertermin bearbeiten":"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
+    footer={<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
+      <span className="spacer"></span><button className="btn" onClick={onClose}>Abbrechen</button>
+      <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>}>
+    <div className="row2">
+      <div className="field"><label>Projekt</label>
+        <select value={projectNr} onChange={e=>pickProject(e.target.value)}>
+          <option value="">— wählen —</option>{activeProjects.map(p=><option key={p.nr} value={p.nr}>{p.alias?p.alias+" · ":""}{p.name}</option>)}</select></div>
+      <div className="field"><label>Autohaus</label><input value={autohaus} onChange={e=>setAutohaus(e.target.value)} placeholder="Name des Autohauses"/></div></div>
+    <div className="row2">
+      <div className="field"><label>Adresse des Autohauses</label><input value={adresse} onChange={e=>setAdresse(e.target.value)} placeholder="Straße Hausnr, PLZ Ort"/>
+        {adresse.trim()&&<a href={mapsLink(adresse)} target="_blank" rel="noopener" className="btn ghost sm" style={{marginTop:6}}><Ic d={ICONS.pin}/> Route öffnen</a>}</div>
+      <div className="field"><label>Versicherung</label>
+        <select value={versicherung} onChange={e=>setVersicherung(e.target.value)}>
+          <option value="">— keine —</option>{usedVers.map(v=><option key={v.name}>{v.name}</option>)}</select></div></div>
+    {!ed&&<div className="row2"><div className="field"><label>Von</label>
+        <input type="date" value={fromDate} onChange={e=>{setFromDate(e.target.value);if(e.target.value>toDate)setToDate(e.target.value);}}/></div>
+      <div className="field"><label>Bis (z. B. Mo–Mi)</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>}
+    <div className="row2">
+      <div className="field"><label>Zeit</label>
+        <div className="pill-tabs" style={{marginBottom:allDay?0:8}}>
+          <button className={allDay?"active":""} onClick={()=>setAllDay(true)}>Ganzer Tag</button>
+          <button className={!allDay?"active":""} onClick={()=>setAllDay(false)}>Uhrzeit</button></div>
+        {!allDay&&<div className="row2"><input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)}/>
+          <input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)}/></div>}</div>
+      <div className="field"><label>Einsatzdauer (optional)</label><input value={dauer} onChange={e=>setDauer(e.target.value)} placeholder="z. B. 2 Tage / 6 Std"/></div></div>
+
+    <div className="field"><label>Fahrzeuge (Kennzeichen und/oder VIN je Fahrzeug · AW erwartet) · Σ {fmtAW(totalAW)} AW</label>
+      {vehicles.map((v,i)=>(<div key={i} className="flex" style={{gap:6,marginBottom:6,alignItems:"center"}}>
+        <input placeholder="Kennzeichen" value={v.kennzeichen} onChange={e=>setVeh(i,{kennzeichen:e.target.value})} style={{flex:"1 1 120px"}}/>
+        <input placeholder="VIN / Fahrgestellnr" value={v.vin} onChange={e=>setVeh(i,{vin:e.target.value})} style={{flex:"2 1 160px"}}/>
+        <input type="number" placeholder="AW" value={v.aw} onChange={e=>setVeh(i,{aw:e.target.value})} style={{width:80}}/>
+        <input type="number" placeholder="AW erl." title="tatsächlich erledigte AW" value={v.awDone} onChange={e=>setVeh(i,{awDone:e.target.value})} style={{width:80}}/>
+        <button className="btn ghost sm" onClick={()=>rmVeh(i)} title="Fahrzeug entfernen" disabled={vehicles.length===1}><Ic d={ICONS.x}/></button>
+      </div>))}
+      <button className="btn sm" onClick={addVeh}><Ic d={ICONS.plus}/> Fahrzeug hinzufügen</button></div>
+
+    <div className="field"><label>Bemerkungen</label><textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="z. B. Vor Reparatur Schadenbilder und VIN fotografieren."/></div>
+
+    <div className="notify-box">
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>Einsatz an Techniker senden</div>
+      {!ed&&<div className="mini muted" style={{marginBottom:8}}>Zum Protokollieren des Versands bitte zuerst „Anlegen". Danach erscheint hier die Versandhistorie.</div>}
+      <div className="flex wrap">
+        <a className="btn green sm" href={hasPhone?waLink(emp.phone,sendMsg):undefined} target="_blank" rel="noopener" onClick={()=>onSend("WhatsApp")}
+           style={hasPhone?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.wa}/> WhatsApp</a>
+        <a className="btn primary sm" href={emp?.email?mailLink(emp.email,subj,sendMsg):undefined} onClick={()=>onSend("E-Mail")}
+           style={emp?.email?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.mail}/> E-Mail (Outlook)</a>
+        {adresse.trim()&&<a className="btn sm" href={mapsLink(adresse)} target="_blank" rel="noopener"><Ic d={ICONS.pin}/> Route</a>}
+      </div>
+      {ed&&(ed.sendLog||[]).length>0&&<div style={{marginTop:10}}>
+        <div className="mini" style={{fontWeight:600,marginBottom:4}}>Versandhistorie</div>
+        {ed.sendLog.slice().reverse().map((s,i)=>(<div key={i} className="mini muted">{fmtDE(s.ts.slice(0,10))} – {s.ts.slice(11,16)} Uhr · {s.channel} versendet{s.by?" ("+shortCreator(s.by)+")":""}</div>))}
+      </div>}
+    </div>
   </Modal>);
 }
 
@@ -1235,8 +1518,9 @@ function VersEditor({versicherungen,api,showToast}){
       <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Hinzufügen</button></div></div></div>);
 }
 function Einstellungen({store}){
-  const{roles,einsatz,typen,appUrl,workdays,versicherungen,api,showToast,employees,projects,assignments}=store;
+  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,api,showToast,employees,projects,assignments}=store;
   const[seeding,setSeeding]=useState(false);const[urlVal,setUrlVal]=useState(appUrl);const[copied,setCopied]=useState("");
+  const[awVal,setAwVal]=useState(awCapacity||0);
   function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,exported:new Date().toISOString()};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);a.download="drs-personal-backup-"+todayYMD+".json";a.click();showToast("Backup heruntergeladen");}
@@ -1253,6 +1537,10 @@ function Einstellungen({store}){
           <button className="btn primary" onClick={doSeed} disabled={seeding}>{seeding?"Lädt…":"Startdaten laden"}</button></div></div></div></div>}
 
     <WorkdaysEditor workdays={workdays} api={api} showToast={showToast}/>
+    <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Technikerplanung · Wochenkapazität (AW)</h3></div><div className="card-b">
+      <p className="muted mini" style={{marginTop:0}}>Optional: geplante AW pro Techniker und Woche als Kapazität. Damit zeigt die AW-Auslastung in der Technikerplanung Prozentwerte. 0 = aus.</p>
+      <div className="flex"><input type="number" value={awVal} onChange={e=>setAwVal(e.target.value)} style={{maxWidth:160}} placeholder="z. B. 600"/>
+        <button className="btn primary sm" onClick={()=>{api.setSetting("aw_capacity",Number(awVal)||0);showToast("Kapazität gespeichert");}}>Speichern</button></div></div></div>
     <VersEditor versicherungen={versicherungen} api={api} showToast={showToast}/>
 
     <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>App-Link für Nachrichten</h3></div><div className="card-b">
