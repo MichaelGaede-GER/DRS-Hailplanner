@@ -187,6 +187,7 @@ create table if not exists projects (
   nr text primary key, name text default '', alias text default '', typ text default '',
   leiter jsonb default '[]'::jsonb, gesellschaft text default '', adresse text default '',
   versicherung text default '', rollen jsonb default '{}'::jsonb,
+  fahrzeugarten jsonb default '[]'::jsonb, remote boolean default false, standort text default 'auto',
   schadendatum date, startdatum date, enddatum date,
   gesamt int default 0, fiktiv int default 0, zu_reparieren int default 0,
   dol_fertig int default 0, fortschritt numeric default 0,
@@ -230,6 +231,9 @@ alter table projects    add column if not exists alias text default '';
 alter table projects    add column if not exists adresse text default '';
 alter table projects    add column if not exists versicherung text default '';
 alter table projects    add column if not exists rollen jsonb default '{}'::jsonb;
+alter table projects    add column if not exists fahrzeugarten jsonb default '[]'::jsonb;
+alter table projects    add column if not exists remote boolean default false;
+alter table projects    add column if not exists standort text default 'auto';
 alter table assignments add column if not exists project_nrs jsonb default '[]'::jsonb;
 alter table assignments add column if not exists all_day boolean default true;
 alter table assignments add column if not exists start_time text;
@@ -275,6 +279,9 @@ const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{
   {name:"Münchner",color:"#db2777"},{name:"R+V",color:"#7c3aed"},{name:"HUK",color:"#0d9488"}];
 const DEFAULT_WORKDAYS=[0,1,2,3,4,5]; // 0=Mo … 6=So  → Mo–Sa
 const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker"];
+const FAHRZEUGARTEN=[["PK","Privatkunden"],["GW","Gebrauchtwagen"],["NW","Neuwagen"]];
+function detectStandort(adresse){return /deutschland|germany/i.test(adresse||"")?"inland":((adresse||"").trim()?"ausland":"inland");}
+function effectiveStandort(p){if(!p)return"inland";return(!p.standort||p.standort==="auto")?detectStandort(p.adresse):p.standort;}
 const ROLLE_KUERZEL={"Erstgespräch":"E","Besichtigung":"B","Projektleiter":"P","Techniker":"T"};
 const ABSENCE_ARTEN=["Urlaub","Krank","Frei","Schulung","Sonstige"];
 const ABSENCE_COLORS={"Urlaub":"#0d9488","Krank":"#dc2626","Frei":"#64748b","Schulung":"#7c3aed","Sonstige":"#d97706"};
@@ -303,12 +310,14 @@ const uid=()=>Math.random().toString(36).slice(2,10);
 /* ============ Mappers ============ */
 const projToDb=p=>({nr:p.nr,name:p.name||"",alias:p.alias||"",typ:p.typ||"",leiter:p.leiter||[],
   gesellschaft:p.gesellschaft||"",adresse:p.adresse||"",versicherung:p.versicherung||"",rollen:p.rollen||{},
+  fahrzeugarten:p.fahrzeugarten||[],remote:!!p.remote,standort:p.standort||"auto",
   schadendatum:p.schadendatum||null,
   startdatum:p.startdatum||null,enddatum:p.enddatum||null,gesamt:p.gesamt||0,fiktiv:p.fiktiv||0,
   zu_reparieren:p.zuReparieren||0,dol_fertig:p.dolFertig||0,fortschritt:p.fortschritt||0,
   umsatz:p.umsatz||0,technikerkosten:p.technikerkosten||0,status:p.status||"Vorbereitung"});
 const projFromDb=r=>({nr:r.nr,name:r.name,alias:r.alias||"",typ:r.typ,leiter:r.leiter||[],
   gesellschaft:r.gesellschaft||"",adresse:r.adresse||"",versicherung:r.versicherung||"",rollen:r.rollen||{},
+  fahrzeugarten:r.fahrzeugarten||[],remote:!!r.remote,standort:r.standort||"auto",
   schadendatum:r.schadendatum,
   startdatum:r.startdatum,enddatum:r.enddatum,gesamt:r.gesamt,fiktiv:r.fiktiv,zuReparieren:r.zu_reparieren,
   dolFertig:r.dol_fertig,fortschritt:Number(r.fortschritt)||0,umsatz:Number(r.umsatz)||0,
@@ -820,7 +829,7 @@ function AssignModal({store,ctx,onClose}){
   const[mode,setMode]=useState(ed?ed.type:"project");
   const[selProjects,setSelProjects]=useState(ed?.projectNrs||[]);
   const[eins,setEins]=useState(ed?.einsatz||einsatz[0]||"");
-  const[title,setTitle]=useState(ed?.title||"");const[ort,setOrt]=useState(ed?.ort||"inland");
+  const[title,setTitle]=useState(ed?.title||"");const[ort,setOrt]=useState(ed?.ort||"inland");const[ortTouched,setOrtTouched]=useState(!!ed);
   const[note,setNote]=useState(ed?.note||"");const[q,setQ]=useState("");
   const[fromDate,setFromDate]=useState(ctx.date);const[toDate,setToDate]=useState(ctx.date);
   const[allDay,setAllDay]=useState(ed?ed.allDay!==false:true);
@@ -833,6 +842,8 @@ function AssignModal({store,ctx,onClose}){
   function toggleProj(nr){setSelProjects(s=>s.includes(nr)?s.filter(x=>x!==nr):[...s,nr]);}
   const selProjObjs=selProjects.map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
   const versName=selProjObjs[0]?.versicherung||"";
+  const projStandort=selProjObjs.length?effectiveStandort(selProjObjs[0]):"";
+  useEffect(()=>{if(!ortTouched&&mode==="project"&&projStandort)setOrt(projStandort);},[projStandort,mode]);
 
   async function submit(){
     if(mode==="project"&&selProjects.length===0){store.showToast("Bitte mindestens ein Projekt wählen");return;}
@@ -905,12 +916,15 @@ function AssignModal({store,ctx,onClose}){
           <option value="">— keine —</option>{PROJEKTROLLEN.map(r=><option key={r}>{r}</option>)}</select></div>
       {selProjObjs.length>0&&<div className="notify-box" style={{marginBottom:14}}>
         <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Projektdaten</div>
-        {selProjObjs.map(p=>(<div key={p.nr} className="mini" style={{marginBottom:4}}>
+        {selProjObjs.map(p=>{const st=effectiveStandort(p);return(<div key={p.nr} className="mini" style={{marginBottom:4}}>
           <b>{p.name}</b>{p.versicherung?<span className="badge b-gray" style={{marginLeft:6}}>{p.versicherung}</span>:null}
+          <span className={"badge "+(st==="ausland"?"b-teal":"b-gray")} style={{marginLeft:6}}>{st==="ausland"?"Ausland":"Inland"}</span>
+          {p.remote?<span className="badge b-violet" style={{marginLeft:6}}>Remote</span>:null}
+          {(p.fahrzeugarten||[]).map(fa=><span key={fa} className="badge b-gray" style={{marginLeft:4}}>{fa}</span>)}
           {p.adresse?<div className="flex" style={{gap:6,marginTop:2}}><Ic d={ICONS.pin} style={{width:13,height:13,color:"var(--muted)"}}/>
             <span>{p.adresse}</span><a href={mapsLink(p.adresse)} target="_blank" rel="noopener" className="btn ghost sm" style={{padding:"2px 8px"}}>Route öffnen</a></div>
             :<div className="muted" style={{marginTop:2}}>Keine Adresse hinterlegt (im Projekt ergänzbar)</div>}
-        </div>))}</div>}
+        </div>);})}</div>}
     </>:<>
       <div className="field"><label>Titel des Termins</label>
         <input placeholder="z. B. Urlaub, Schulung, Sondereinsatz…" value={title} onChange={e=>setTitle(e.target.value)}/></div>
@@ -926,7 +940,8 @@ function AssignModal({store,ctx,onClose}){
       {!allDay&&<div className="row2"><input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)}/>
         <input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)}/></div>}</div>
 
-    <div className="field"><label>Ort</label><select value={ort} onChange={e=>setOrt(e.target.value)}>
+    <div className="field"><label>Ort {mode==="project"&&projStandort&&!ortTouched&&<span className="mini muted">· automatisch aus Projektstandort</span>}</label>
+      <select value={ort} onChange={e=>{setOrt(e.target.value);setOrtTouched(true);}}>
       <option value="inland">Inland</option><option value="ausland">Ausland</option></select></div>
     <div className="field"><label>Hinweis (optional)</label>
       <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Zusätzliche Info für den Mitarbeiter…"/></div>
@@ -1269,10 +1284,14 @@ function RoleBar({project,assignments,employees}){
         fontSize:11,fontWeight:700,background:on?"var(--green)":"#e2e8f0",color:on?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>);})}</div>);
 }
 function Projekte({store}){
-  const{projects,typen,api,versicherungen,assignments,employees}=store;
+  const{projects,typen,api,versicherungen,assignments,techAssignments,employees}=store;
   const[q,setQ]=useState("");const[view,setView]=useState("alle");const[fTyp,setFTyp]=useState("");const[fVers,setFVers]=useState("");
   const[edit,setEdit]=useState(null);const[importOpen,setImportOpen]=useState(false);
   const versColor=name=>{const v=(versicherungen||[]).find(x=>x.name===name);return v?v.color:null;};
+  const plannedFor=p=>{const m=new Map();
+    assignments.filter(a=>(a.projectNrs||[]).includes(p.nr)&&a.date>=todayYMD).forEach(a=>{const e=employees.find(x=>x.id===a.employeeId);if(e)m.set(e.id,e);});
+    techAssignments.filter(t=>t.projectNr===p.nr&&t.date>=todayYMD).forEach(t=>{const e=employees.find(x=>x.id===t.employeeId);if(e)m.set(e.id,e);});
+    return[...m.values()];};
   const filtered=projects.filter(p=>(!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q))&&
     (view==="alle"||(view==="aktiv"&&ACTIVE_STATUS.includes(p.status))||(view==="geplant"&&PLANNED_STATUS.includes(p.status)))&&
     (!fTyp||p.typ===fTyp)&&(!fVers||p.versicherung===fVers));
@@ -1295,22 +1314,29 @@ function Projekte({store}){
     </div>
     <div className="tbl-wrap"><table><thead><tr>
       <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Versich.</th><th>Planung (E·B·P·T)</th>
-      <th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
-      {filtered.map(p=>{const vc=versColor(p.versicherung);
+      <th>Eingeplant</th><th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
+      {filtered.map(p=>{const vc=versColor(p.versicherung);const stand=effectiveStandort(p);const planned=plannedFor(p);
         return(<tr key={p.nr} className="clickrow" onClick={()=>setEdit(p)} title="Zum Bearbeiten klicken">
         <td style={{fontWeight:600}}>{p.nr}</td>
-        <td><span className="flex" style={{gap:7}}>{vc&&<span className="dot" style={{background:vc}} title={p.versicherung}></span>}{p.name}</span></td>
+        <td><span className="flex" style={{gap:7}}>{vc&&<span className="dot" style={{background:vc}} title={p.versicherung}></span>}{p.name}</span>
+          <div className="flex wrap" style={{gap:4,marginTop:3}}>
+            {(p.fahrzeugarten||[]).map(fa=><span key={fa} className="badge b-gray" style={{fontSize:10}}>{fa}</span>)}
+            {stand==="ausland"&&<span className="badge b-teal" style={{fontSize:10}}>Ausland</span>}
+            {p.remote&&<span className="badge b-violet" style={{fontSize:10}}>Remote</span>}</div></td>
         <td>{p.alias?<span className="badge b-blue">{p.alias}</span>:<span className="muted">—</span>}</td>
         <td><span className="badge b-gray">{p.typ}</span></td>
         <td className="mini">{p.versicherung||<span className="muted">—</span>}</td>
         <td><RoleBar project={p} assignments={assignments} employees={employees}/></td>
+        <td className="mini">{planned.length===0?<span className="muted">—</span>:
+          <span className="flex wrap" style={{gap:4}}>{planned.slice(0,3).map(e=><span key={e.id} className="badge b-blue" style={{fontSize:10}} title={e.name}>{shortName(e.name)}</span>)}
+            {planned.length>3&&<span className="badge b-gray" style={{fontSize:10}}>+{planned.length-3}</span>}</span>}</td>
         <td><div className="flex"><div className="progress"><div style={{width:Math.round((p.fortschritt||0)*100)+"%"}}></div></div>
           <span className="mini">{Math.round((p.fortschritt||0)*100)}%</span></div></td>
         <td><span className={"badge "+(STATUS_COLORS[p.status]||"b-gray")}>{p.status}</span></td>
         <td onClick={e=>e.stopPropagation()}><div className="flex">
           <button className="btn sm" onClick={()=>setEdit(p)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
           <button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>);})}
-      {filtered.length===0&&<tr><td colSpan="9"><div className="empty"><div className="big">Keine Projekte</div>
+      {filtered.length===0&&<tr><td colSpan="10"><div className="empty"><div className="big">Keine Projekte</div>
         <div>Lege eins an oder lade die Startdaten in den Einstellungen.</div></div></td></tr>}
     </tbody></table></div>
     {edit&&<ProjectEdit store={store} proj={edit} onClose={()=>setEdit(null)}/>}
@@ -1323,19 +1349,23 @@ function ProjectEdit({store,proj,onClose}){
   const[f,setF]=useState({nr:proj.nr||"",name:proj.name||"",alias:proj.alias||"",typ:proj.typ||typen[0]||"",
     leiter:(proj.leiter||[]).join("\n"),adresse:proj.adresse||"",startdatum:proj.startdatum||"",enddatum:proj.enddatum||"",
     fortschritt:proj.fortschritt!=null?Math.round(proj.fortschritt*100):0,status:proj.status||"Vorbereitung",
-    versicherung:proj.versicherung||"",
+    versicherung:proj.versicherung||"",standort:proj.standort||"auto",
     gesellschaft:proj.gesellschaft||"DRS Hagelschaden",umsatz:proj.umsatz||0,technikerkosten:proj.technikerkosten||0});
   const[rollen,setRollen]=useState(proj.rollen||{});
+  const[fahrzeugarten,setFahrzeugarten]=useState(proj.fahrzeugarten||[]);
+  const[remote,setRemote]=useState(!!proj.remote);
   const[histOpen,setHistOpen]=useState("");
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
   const setRolle=(r,patch)=>setRollen(o=>({...o,[r]:{...(o[r]||{}),...patch}}));
+  const toggleFA=code=>setFahrzeugarten(a=>a.includes(code)?a.filter(x=>x!==code):[...a,code]);
   const derived=isNew?{}:computeRoles({...proj,rollen},assignments,employees);
   const allStatus=["Vorbereitung","Begutachtung","Reparatur","Finance","Beendet","fiktiv"];
+  const autoStand=detectStandort(f.adresse);
   async function submit(){
     if(!f.nr.trim()){store.showToast("Projekt-Nr erforderlich");return;}
     if(isNew&&projects.some(p=>p.nr===f.nr.trim())){store.showToast("Nr existiert bereits");return;}
     const rec={...proj,nr:f.nr.trim(),name:f.name.trim(),alias:f.alias.trim(),typ:f.typ,adresse:f.adresse.trim(),
-      versicherung:f.versicherung,rollen,
+      versicherung:f.versicherung,rollen,fahrzeugarten,remote,standort:f.standort,
       leiter:f.leiter.split("\n").map(x=>x.trim()).filter(Boolean),startdatum:f.startdatum||null,enddatum:f.enddatum||null,
       fortschritt:(parseFloat(f.fortschritt)||0)/100,status:f.status,gesellschaft:f.gesellschaft,
       umsatz:parseFloat(f.umsatz)||0,technikerkosten:parseFloat(f.technikerkosten)||0};
@@ -1355,6 +1385,18 @@ function ProjectEdit({store,proj,onClose}){
           <option value="">— keine —</option>{(versicherungen||[]).map(v=><option key={v.name}>{v.name}</option>)}</select></div>
       <div className="field"><label>Adresse (für Google-Maps-Link)</label>
         <input value={f.adresse} onChange={e=>set("adresse",e.target.value)} placeholder="Straße Hausnr, PLZ Ort"/></div></div>
+    <div className="row2">
+      <div className="field"><label>Fahrzeugarten (Mehrfachauswahl)</label>
+        <div className="flex wrap" style={{gap:8}}>{FAHRZEUGARTEN.map(([code,label])=>{const on=fahrzeugarten.includes(code);
+          return(<button key={code} type="button" className={"btn sm"+(on?" primary":"")} onClick={()=>toggleFA(code)} title={label}>{on?"✓ ":""}{code}</button>);})}</div>
+        <div className="mini muted" style={{marginTop:4}}>PK = Privatkunden · GW = Gebrauchtwagen · NW = Neuwagen</div></div>
+      <div className="field"><label>Standort</label>
+        <div className="flex" style={{gap:8}}>
+          <select value={f.standort} onChange={e=>set("standort",e.target.value)} style={{maxWidth:200}}>
+            <option value="auto">Automatisch (aus Adresse)</option><option value="inland">Inland</option><option value="ausland">Ausland</option></select>
+          <span className={"badge "+((f.standort==="auto"?autoStand:f.standort)==="ausland"?"b-teal":"b-gray")}>
+            {(f.standort==="auto"?autoStand:f.standort)==="ausland"?"Ausland":"Inland"}{f.standort==="auto"?" (auto)":""}</span></div>
+        <label className="flex mini" style={{gap:8,cursor:"pointer",marginTop:8}}><input type="checkbox" style={{width:"auto"}} checked={remote} onChange={e=>setRemote(e.target.checked)}/> Remote-Projekt</label></div></div>
     <div className="row2">
       <div className="field"><label>Startdatum</label><input type="date" value={f.startdatum||""} onChange={e=>set("startdatum",e.target.value)}/></div>
       <div className="field"><label>Enddatum</label><input type="date" value={f.enddatum||""} onChange={e=>set("enddatum",e.target.value)}/></div></div>
@@ -1413,6 +1455,8 @@ function ImportModal({store,onClose}){
         items.push({nr:nrClean,name:c.name>=0?String(r[c.name]).trim():"",alias:cur?cur.alias:"",typ:c.typ>=0?String(r[c.typ]).trim():"",
           leiter:c.leiter>=0?String(r[c.leiter]).split("\n").map(x=>x.trim()).filter(Boolean):[],
           adresse:c.adr>=0?String(r[c.adr]).trim():(cur?cur.adresse:""),
+          versicherung:cur?cur.versicherung:"",rollen:cur?cur.rollen:{},
+          fahrzeugarten:cur?cur.fahrzeugarten:[],remote:cur?cur.remote:false,standort:cur?cur.standort:"auto",
           startdatum:c.start>=0?excelDate(r[c.start]):null,enddatum:c.end>=0?excelDate(r[c.end]):null,
           fortschritt:fort,status:c.status>=0?String(r[c.status]).trim():"Vorbereitung",
           gesellschaft:c.ges>=0?String(r[c.ges]).trim():"",umsatz:c.umsatz>=0?num(r[c.umsatz]):0,
