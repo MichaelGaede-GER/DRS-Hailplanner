@@ -214,18 +214,35 @@ create table if not exists tech_assignments (
   vehicles jsonb default '[]'::jsonb, note text default '',
   send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 
+create table if not exists app_users (
+  email text primary key, name text default '', rolle text default 'Betrachter',
+  permissions jsonb default '{}'::jsonb, employee_id uuid, active boolean default true,
+  created_at timestamptz default now());
+create table if not exists login_log (
+  id uuid primary key default gen_random_uuid(),
+  email text, ts timestamptz default now(), user_agent text);
+create table if not exists change_log (
+  id uuid primary key default gen_random_uuid(),
+  ts timestamptz default now(), user_email text, action text, details text);
+
 alter table employees enable row level security;
 alter table projects enable row level security;
 alter table assignments enable row level security;
 alter table settings enable row level security;
 alter table tech_assignments enable row level security;
 alter table absences enable row level security;
+alter table app_users enable row level security;
+alter table login_log enable row level security;
+alter table change_log enable row level security;
 create policy "auth all" on employees   for all to authenticated using (true) with check (true);
 create policy "auth all" on projects    for all to authenticated using (true) with check (true);
 create policy "auth all" on assignments for all to authenticated using (true) with check (true);
 create policy "auth all" on settings    for all to authenticated using (true) with check (true);
 create policy "auth all" on tech_assignments for all to authenticated using (true) with check (true);
-create policy "auth all" on absences    for all to authenticated using (true) with check (true);`;
+create policy "auth all" on absences    for all to authenticated using (true) with check (true);
+create policy "auth all" on app_users   for all to authenticated using (true) with check (true);
+create policy "auth all" on login_log   for all to authenticated using (true) with check (true);
+create policy "auth all" on change_log  for all to authenticated using (true) with check (true);`;
 const MIGRATION_SQL=`-- Update-Skript (nur falls die Tabellen aus einer früheren Version schon existieren)
 alter table projects    add column if not exists alias text default '';
 alter table projects    add column if not exists adresse text default '';
@@ -268,7 +285,24 @@ create table if not exists absences (
 alter table absences enable row level security;
 do $$ begin
   create policy "auth all" on absences for all to authenticated using (true) with check (true);
-exception when duplicate_object then null; end $$;`;
+exception when duplicate_object then null; end $$;
+-- Nutzerverwaltung, Login- & Änderungsprotokoll (Phase 5):
+create table if not exists app_users (
+  email text primary key, name text default '', rolle text default 'Betrachter',
+  permissions jsonb default '{}'::jsonb, employee_id uuid, active boolean default true,
+  created_at timestamptz default now());
+create table if not exists login_log (
+  id uuid primary key default gen_random_uuid(),
+  email text, ts timestamptz default now(), user_agent text);
+create table if not exists change_log (
+  id uuid primary key default gen_random_uuid(),
+  ts timestamptz default now(), user_email text, action text, details text);
+alter table app_users enable row level security;
+alter table login_log enable row level security;
+alter table change_log enable row level security;
+do $$ begin create policy "auth all" on app_users for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy "auth all" on login_log for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy "auth all" on change_log for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;`;
 
 /* ============ Seed & constants ============ */
 const SEED=JSON.parse(document.getElementById('seed-data').textContent);
@@ -280,8 +314,26 @@ const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{
 const DEFAULT_WORKDAYS=[0,1,2,3,4,5]; // 0=Mo … 6=So  → Mo–Sa
 const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker"];
 const FAHRZEUGARTEN=[["PK","Privatkunden"],["GW","Gebrauchtwagen"],["NW","Neuwagen"]];
-function detectStandort(adresse){return /deutschland|germany/i.test(adresse||"")?"inland":((adresse||"").trim()?"ausland":"inland");}
-function effectiveStandort(p){if(!p)return"inland";return(!p.standort||p.standort==="auto")?detectStandort(p.adresse):p.standort;}
+const PERM_DEFS=[
+  ["proj_view","Projekte ansehen"],["proj_create","Projekte erstellen"],["proj_edit","Projekte bearbeiten"],["proj_delete","Projekte löschen"],
+  ["term_view","Termine ansehen"],["term_own","Eigene Termine bearbeiten"],["term_others","Fremde Termine bearbeiten"],
+  ["tech_edit","Technikerplanung bearbeiten"],["emp_edit","Mitarbeiter bearbeiten"],["vers_edit","Einstellungen/Versicherungen bearbeiten"],
+  ["users_manage","Nutzer verwalten"],["logs_view","Logbücher ansehen"],["reports_view","Auswertungen ansehen"]];
+const PERM_KEYS=PERM_DEFS.map(p=>p[0]);
+const ROLES_LIST=["Super-Admin","Admin","Disponent","Mitarbeiter","Betrachter"];
+function permObj(keys){const o={};PERM_KEYS.forEach(k=>o[k]=false);(keys||[]).forEach(k=>o[k]=true);return o;}
+const ROLE_PRESETS={
+  "Super-Admin":permObj(PERM_KEYS),
+  "Admin":permObj(PERM_KEYS.filter(k=>k!=="users_manage")),
+  "Disponent":permObj(["proj_view","term_view","term_own","term_others","tech_edit","reports_view"]),
+  "Mitarbeiter":permObj(["proj_view","term_view","term_own"]),
+  "Betrachter":permObj(["proj_view","term_view","reports_view"])};
+function rolePreset(rolle,roleSettings){const base=ROLE_PRESETS[rolle]||ROLE_PRESETS["Betrachter"];
+  const ov=(roleSettings||{})[rolle];return ov?{...base,...ov}:{...base};}
+function effectivePerms(user,roleSettings){if(!user)return permObj([]);
+  const base=rolePreset(user.rolle,roleSettings);return {...base,...(user.permissions||{})};}
+function detectStandort(adresse){return "inland";} // Standard immer Inland; Ausland wird manuell gesetzt
+function effectiveStandort(p){if(!p)return"inland";return(!p.standort||p.standort==="auto")?"inland":p.standort;}
 const ROLLE_KUERZEL={"Erstgespräch":"E","Besichtigung":"B","Projektleiter":"P","Techniker":"T"};
 const ABSENCE_ARTEN=["Urlaub","Krank","Frei","Schulung","Sonstige"];
 const ABSENCE_COLORS={"Urlaub":"#0d9488","Krank":"#dc2626","Frei":"#64748b","Schulung":"#7c3aed","Sonstige":"#d97706"};
@@ -340,6 +392,8 @@ const techFromDb=r=>({id:r.id,employeeId:r.employee_id,projectNr:r.project_nr||"
   versicherung:r.versicherung||"",vehicles:r.vehicles||[],note:r.note||"",sendLog:r.send_log||[],createdBy:r.created_by});
 const awSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
 const awDoneSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.awDone)||0),0);
+const userFromDb=r=>({email:r.email,name:r.name||"",rolle:r.rolle||"Betrachter",permissions:r.permissions||{},employeeId:r.employee_id||"",active:r.active!==false});
+const userToDb=u=>({email:(u.email||"").trim().toLowerCase(),name:u.name||"",rolle:u.rolle||"Betrachter",permissions:u.permissions||{},employee_id:u.employeeId||null,active:u.active!==false});
 const absToDb=a=>({employee_id:a.employeeId,art:a.art||"Urlaub",von:a.von,bis:a.bis,note:a.note||"",created_by:a.createdBy||null});
 const absFromDb=r=>({id:r.id,employeeId:r.employee_id,art:r.art,von:r.von,bis:r.bis,note:r.note||"",createdBy:r.created_by});
 
@@ -371,6 +425,9 @@ const ICONS={
   swap:"M17 1l4 4-4 4M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 01-4 4H3",
   tech:"M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z",
   car:"M5 11l1.5-4.5A2 2 0 018.4 5h7.2a2 2 0 011.9 1.5L19 11m-14 0h14m-14 0a2 2 0 00-2 2v3h2m14-5a2 2 0 012 2v3h-2m-2 0H7m10 0v2m-10-2v2M7 14h.01M17 14h.01",
+  shield:"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  users:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
+  book:"M4 19.5A2.5 2.5 0 016.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z",
 };
 
 function useToast(){const[t,setT]=useState(null);
@@ -473,6 +530,8 @@ function App({sb,session}){
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
   const[workdays,setWorkdays]=useState(DEFAULT_WORKDAYS);const[versicherungen,setVersicherungen]=useState(DEFAULT_VERS);
   const[awCapacity,setAwCapacity]=useState(0);const[rolePlanung,setRolePlanung]=useState({});
+  const[appUsers,setAppUsers]=useState([]);const[loginLog,setLoginLog]=useState([]);const[changeLog,setChangeLog]=useState([]);
+  const[rolePerm,setRolePerm]=useState({});
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
@@ -496,6 +555,14 @@ function App({sb,session}){
       setVersicherungen(Array.isArray(sm.versicherungen)?sm.versicherungen:DEFAULT_VERS);
       setAwCapacity(Number(sm.aw_capacity)||0);
       setRolePlanung(sm.role_planung&&typeof sm.role_planung==="object"&&!Array.isArray(sm.role_planung)?sm.role_planung:{});
+      setRolePerm(sm.role_permissions&&typeof sm.role_permissions==="object"&&!Array.isArray(sm.role_permissions)?sm.role_permissions:{});
+      const au=await sb.from("app_users").select("*");
+      if(au.error){if(/relation|does not exist|schema cache|could not find/i.test(au.error.message||""))setSchemaWarn(true);setAppUsers([]);}
+      else setAppUsers((au.data||[]).map(userFromDb));
+      const ll=await sb.from("login_log").select("*").order("ts",{ascending:false}).limit(200);
+      if(!ll.error)setLoginLog(ll.data||[]);
+      const cl=await sb.from("change_log").select("*").order("ts",{ascending:false}).limit(300);
+      if(!cl.error)setChangeLog(cl.data||[]);
       // Technikerplanung getrennt laden (Tabelle existiert evtl. noch nicht → tolerant)
       const t=await sb.from("tech_assignments").select("*");
       if(t.error){if(/relation|does not exist|schema cache|could not find/i.test(t.error.message||""))setSchemaWarn(true);setTechAssignments([]);}
@@ -507,6 +574,11 @@ function App({sb,session}){
     setLoading(false);
   }
   useEffect(()=>{reload();},[]);
+  const loggedRef=useRef(false);
+  useEffect(()=>{if(loading||loggedRef.current)return;loggedRef.current=true;
+    (async()=>{try{await sb.from("login_log").insert({email:myEmail,user_agent:navigator.userAgent});}catch(e){}})();
+  },[loading]);
+  const logChange=async(action,details)=>{try{const{data}=await sb.from("change_log").insert({user_email:myEmail,action,details:details||""}).select().single();if(data)setChangeLog(cl=>[data,...cl]);}catch(e){}};
 
   const api={
     async saveEmployee(rec,isNew){
@@ -516,7 +588,7 @@ function App({sb,session}){
       if(isNew){const{data,error}=await sb.from("employees").insert(cols).select().single();
         if(error)return fail(error);setEmployees(es=>[...es,data].sort((a,b)=>a.name.localeCompare(b.name)));showToast("Mitarbeiter angelegt");return true;}
       else{const{error}=await sb.from("employees").update(cols).eq("id",rec.id);
-        if(error)return fail(error);setEmployees(es=>es.map(e=>e.id===rec.id?{...e,...cols}:e).sort((a,b)=>a.name.localeCompare(b.name)));showToast("Gespeichert");return true;}},
+        if(error)return fail(error);setEmployees(es=>es.map(e=>e.id===rec.id?{...e,...cols}:e).sort((a,b)=>a.name.localeCompare(b.name)));showToast("Gespeichert");logChange("Mitarbeiter geändert",cols.name+(cols.gesperrt?" · gesperrt":""));return true;}},
     async deleteEmployee(id){const{error}=await sb.from("employees").delete().eq("id",id);
       if(error)return fail(error);setEmployees(es=>es.filter(e=>e.id!==id));setAssignments(as=>as.filter(a=>a.employeeId!==id));setAbsences(ab=>ab.filter(a=>a.employeeId!==id));showToast("Mitarbeiter gelöscht");return true;},
     async addAbsence(rec){
@@ -525,8 +597,8 @@ function App({sb,session}){
     async deleteAbsence(id){const{error}=await sb.from("absences").delete().eq("id",id);
       if(error)return fail(error);setAbsences(ab=>ab.filter(a=>a.id!==id));showToast("Abwesenheit gelöscht");return true;},
     async saveProject(rec,isNew){
-      if(isNew){const{error}=await sb.from("projects").insert(projToDb(rec));if(error)return fail(error);setProjects(ps=>[rec,...ps]);showToast("Projekt angelegt");return true;}
-      else{const{error}=await sb.from("projects").update(projToDb(rec)).eq("nr",rec.nr);if(error)return fail(error);setProjects(ps=>ps.map(p=>p.nr===rec.nr?rec:p));showToast("Projekt gespeichert");return true;}},
+      if(isNew){const{error}=await sb.from("projects").insert(projToDb(rec));if(error)return fail(error);setProjects(ps=>[rec,...ps]);showToast("Projekt angelegt");logChange("Projekt angelegt",rec.nr+" · "+rec.name);return true;}
+      else{const{error}=await sb.from("projects").update(projToDb(rec)).eq("nr",rec.nr);if(error)return fail(error);setProjects(ps=>ps.map(p=>p.nr===rec.nr?rec:p));showToast("Projekt gespeichert");logChange("Projekt geändert",rec.nr+" · Status "+rec.status);return true;}},
     async deleteProject(nr){const{error}=await sb.from("projects").delete().eq("nr",nr);if(error)return fail(error);setProjects(ps=>ps.filter(p=>p.nr!==nr));showToast("Projekt gelöscht");return true;},
     async upsertProjects(newList,updateList){
       const all=[...newList,...updateList];if(!all.length)return{add:0,upd:0};
@@ -538,15 +610,15 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);
       setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);
-      showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");return true;},
+      showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");logChange("Termin erstellt",list.length+" Einsatz/Einsätze");return true;},
     async updateAssignment(rec){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
-      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");return true;},
-    async deleteAssignment(id){const{error}=await sb.from("assignments").delete().eq("id",id);if(error)return fail(error);setAssignments(as=>as.filter(a=>a.id!==id));showToast("Einsatz gelöscht");return true;},
+      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");logChange("Termin geändert",rec.date);return true;},
+    async deleteAssignment(id){const{error}=await sb.from("assignments").delete().eq("id",id);if(error)return fail(error);setAssignments(as=>as.filter(a=>a.id!==id));showToast("Einsatz gelöscht");logChange("Termin gelöscht","");return true;},
     async moveAssignment(id,employeeId,date){const{error}=await sb.from("assignments").update({employee_id:employeeId,date}).eq("id",id);
       if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId,date}:a));return true;},
     async handOver(id,newEmpId,name){const{error}=await sb.from("assignments").update({employee_id:newEmpId}).eq("id",id);
-      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId:newEmpId}:a));showToast("Übergeben an "+name);return true;},
+      if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId:newEmpId}:a));showToast("Übergeben an "+name);logChange("Termin übergeben","an "+name);return true;},
     async copyWeek(sourceDates){
       const src=assignments.filter(a=>sourceDates.includes(a.date));
       if(!src.length){showToast("Keine Einsätze zum Kopieren");return false;}
@@ -555,13 +627,23 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung,role_permissions:setRolePerm}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
+    logChange,
+    async saveUser(rec,isNew){
+      const row=userToDb(rec);
+      const{error}=await sb.from("app_users").upsert(row,{onConflict:"email"});if(error)return fail(error);
+      setAppUsers(us=>{const ex=us.some(u=>u.email===row.email);return ex?us.map(u=>u.email===row.email?userFromDb(row):u):[...us,userFromDb(row)];});
+      logChange(isNew?"Nutzer angelegt":"Nutzer geändert",row.email+" · "+row.rolle);showToast("Nutzer gespeichert");return true;},
+    async deleteUser(email){const{error}=await sb.from("app_users").delete().eq("email",email);if(error)return fail(error);
+      setAppUsers(us=>us.filter(u=>u.email!==email));logChange("Nutzer gelöscht",email);showToast("Nutzer gelöscht");return true;},
+    async setRolePerm(next){const{error}=await sb.from("settings").upsert({key:"role_permissions",value:next},{onConflict:"key"});if(error)return fail(error);
+      setRolePerm(next);logChange("Benutzerrechte geändert","");return true;},
     async addTech(list){
       const rows=list.map(t=>techToDb({...t,createdBy:myEmail}));
       const{data,error}=await sb.from("tech_assignments").insert(rows).select();
       if(error)return fail(error);setTechAssignments(ts=>[...ts,...(data||[]).map(techFromDb)]);
-      showToast(list.length>1?(list.length+" Technikertermine angelegt"):"Technikertermin angelegt");return true;},
+      showToast(list.length>1?(list.length+" Technikertermine angelegt"):"Technikertermin angelegt");logChange("Technikertermin erstellt",list.length+"x");return true;},
     async updateTech(rec){
       const{error}=await sb.from("tech_assignments").update(techToDb(rec)).eq("id",rec.id);
       if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===rec.id?rec:t));showToast("Technikertermin aktualisiert");return true;},
@@ -572,7 +654,7 @@ function App({sb,session}){
       const cur=techAssignments.find(t=>t.id===id);if(!cur)return false;
       const sendLog=[...(cur.sendLog||[]),{ts:new Date().toISOString(),channel,by:myEmail}];
       const{error}=await sb.from("tech_assignments").update({send_log:sendLog}).eq("id",id);
-      if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===id?{...t,sendLog}:t));return true;},
+      if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===id?{...t,sendLog}:t));logChange("Einsatzplanung versendet",channel);return true;},
     async copyTechWeek(sourceDates){
       const src=techAssignments.filter(t=>sourceDates.includes(t.date));
       if(!src.length){showToast("Keine Technikertermine zum Kopieren");return false;}
@@ -588,24 +670,35 @@ function App({sb,session}){
       showToast("Startdaten geladen");reload();},
   };
 
-  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,api,showToast,session,myEmail,reload,schemaWarn};
+  const currentUser=appUsers.find(u=>u.email===(myEmail||"").toLowerCase());
+  const isBootstrap=appUsers.length===0;
+  const perm=isBootstrap?permObj(PERM_KEYS):(currentUser?effectivePerms(currentUser,rolePerm):effectivePerms({rolle:"Betrachter"},rolePerm));
+  const can=k=>!!perm[k];
+  const myEmployeeId=(currentUser&&currentUser.employeeId)||((employees.find(e=>(e.email||"").toLowerCase()===(myEmail||"").toLowerCase())||{}).id)||"";
+  const canTermFor=empId=>(empId&&myEmployeeId&&empId===myEmployeeId)?can("term_own"):can("term_others");
+  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,appUsers,loginLog,changeLog,rolePerm,currentUser,isBootstrap,perm,can,myEmployeeId,canTermFor,api,showToast,session,myEmail,reload,schemaWarn};
 
-  const NAV=[["dash","Dashboard",ICONS.dash],["week","Wochenplanung",ICONS.week],["tech","Technikerplanung",ICONS.tech],["proj","Projekte",ICONS.proj],
-    ["emp","Mitarbeiter",ICONS.emp],["stat","Statistik",ICONS.stat],["set","Einstellungen",ICONS.set]];
+  const NAV=[["dash","Dashboard",ICONS.dash,true],["week","Wochenplanung",ICONS.week,can("term_view")],
+    ["tech","Technikerplanung",ICONS.tech,can("term_view")],["proj","Projekte",ICONS.proj,can("proj_view")],
+    ["emp","Mitarbeiter",ICONS.emp,can("emp_edit")||can("users_manage")],["stat","Statistik",ICONS.stat,can("reports_view")],
+    ["users","Nutzer",ICONS.users,can("users_manage")||isBootstrap],["logs","Protokolle",ICONS.book,can("logs_view")],
+    ["set","Einstellungen",ICONS.set,can("vers_edit")]].filter(x=>x[3]);
+  const allowedTabs=NAV.map(x=>x[0]);
+  const activeTab=allowedTabs.includes(tab)?tab:"dash";
 
   return(<div>
     <div className="topnav">
       <div className="brand">DRS Personal <small>Management</small></div>
       <div className="tnav">{NAV.map(([k,l,ic])=>(
-        <button key={k} className={"tab"+(tab===k?" active":"")} onClick={()=>setTab(k)}><Ic d={ic}/>{l}</button>))}</div>
+        <button key={k} className={"tab"+(activeTab===k?" active":"")} onClick={()=>setTab(k)}><Ic d={ic}/>{l}</button>))}</div>
       <div className="tnav-user">
-        <span style={{maxWidth:160,overflow:"hidden",textOverflow:"ellipsis"}}>{session.user.email}</span>
+        <span style={{maxWidth:200,overflow:"hidden",textOverflow:"ellipsis"}}>{session.user.email}{currentUser?" · "+currentUser.rolle:(isBootstrap?" · Super-Admin":"")}</span>
         <button className="btn sm" onClick={()=>sb.auth.signOut()}><Ic d={ICONS.logout}/> Abmelden</button></div>
     </div>
-    <div className={"page"+((tab==="week"||tab==="tech")?" wide":"")}>
+    <div className={"page"+((activeTab==="week"||activeTab==="tech")?" wide":"")}>
       {schemaWarn&&<div className="card" style={{marginBottom:16,borderColor:"var(--red)",borderWidth:2}}><div className="card-b">
         <div style={{fontWeight:700,color:"var(--red)",marginBottom:6}}>⚠ Datenbank muss aktualisiert werden</div>
-        <p className="mini" style={{marginTop:0}}>Beim Speichern fehlen Spalten (z. B. <b>alias</b>, <b>adresse</b>). Führe dieses Skript einmalig im Supabase <b>SQL-Editor</b> aus, dann klappt das Bearbeiten. Danach diese Seite neu laden.</p>
+        <p className="mini" style={{marginTop:0}}>Beim Speichern/Laden fehlen Spalten oder Tabellen. Führe dieses Skript einmalig im Supabase <b>SQL-Editor</b> aus, dann diese Seite neu laden.</p>
         <div className="sql-box">{MIGRATION_SQL}</div>
         <div className="flex"><button className="btn sm" onClick={()=>{navigator.clipboard.writeText(MIGRATION_SQL);showToast("SQL kopiert");}}>Update-SQL kopieren</button>
           <button className="btn sm" onClick={()=>window.location.reload()}>Neu laden</button>
@@ -614,13 +707,15 @@ function App({sb,session}){
        loadErr?<div className="card"><div className="card-b"><div className="err">Fehler beim Laden: {loadErr}</div>
          <button className="btn" onClick={reload}>Erneut versuchen</button>
          <p className="mini muted" style={{marginTop:10}}>Falls Spalten fehlen (z. B. „alias"), führe das Update-Skript unter Einstellungen aus.</p></div></div>:<>
-        {tab==="dash"&&<Dashboard store={store} go={setTab}/>}
-        {tab==="week"&&<Wochenplanung store={store}/>}
-        {tab==="tech"&&<Technikerplanung store={store}/>}
-        {tab==="proj"&&<Projekte store={store}/>}
-        {tab==="emp"&&<Mitarbeiter store={store}/>}
-        {tab==="stat"&&<Statistik store={store}/>}
-        {tab==="set"&&<Einstellungen store={store}/>}
+        {activeTab==="dash"&&<Dashboard store={store} go={setTab}/>}
+        {activeTab==="week"&&<Wochenplanung store={store}/>}
+        {activeTab==="tech"&&<Technikerplanung store={store}/>}
+        {activeTab==="proj"&&<Projekte store={store}/>}
+        {activeTab==="emp"&&<Mitarbeiter store={store}/>}
+        {activeTab==="stat"&&<Statistik store={store}/>}
+        {activeTab==="users"&&<Nutzerverwaltung store={store}/>}
+        {activeTab==="logs"&&<Protokolle store={store}/>}
+        {activeTab==="set"&&<Einstellungen store={store}/>}
       </>}
     </div>
     {toast}
@@ -824,7 +919,7 @@ function Wochenplanung({store}){
 }
 
 function AssignModal({store,ctx,onClose}){
-  const{projects,employees,einsatz,absences,api,appUrl}=store;
+  const{projects,employees,einsatz,absences,api,appUrl,canTermFor}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
   const[mode,setMode]=useState(ed?ed.type:"project");
   const[selProjects,setSelProjects]=useState(ed?.projectNrs||[]);
@@ -880,10 +975,12 @@ function AssignModal({store,ctx,onClose}){
   const handTgt=employees.find(e=>e.id===handTo);
   const handMsg=handTgt?buildMessage(handTgt,previewA,projects,appUrl):"";
 
-  return(<Modal title={(ed?"Einsatz bearbeiten":"Einsatz hinzufügen")+" · "+fmtDE(ctx.date)} onClose={onClose} wide
-    footer={<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
+  const mayEdit=canTermFor(ctx.employeeId);
+  return(<Modal title={(ed?(mayEdit?"Einsatz bearbeiten":"Einsatz ansehen"):"Einsatz hinzufügen")+" · "+fmtDE(ctx.date)} onClose={onClose} wide
+    footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
       <span className="spacer"></span><button className="btn" onClick={onClose}>Abbrechen</button>
-      <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>}>
+      <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>
+      :<><span className="mini muted">Keine Berechtigung zum Bearbeiten dieses Termins.</span><span className="spacer"></span><button className="btn" onClick={onClose}>Schließen</button></>}>
     <div className="field"><label>Mitarbeiter</label><div style={{fontWeight:600,padding:"6px 0"}}>{emp?.name}
       {ed?.createdBy&&<span className="mini muted" style={{marginLeft:10,fontWeight:400}}>· eingetragen von {ed.createdBy}</span>}</div></div>
     <div className="pill-tabs" style={{marginBottom:16}}>
@@ -1171,11 +1268,13 @@ function TechModal({store,ctx,onClose}){
   const subj="Einsatzplanung "+(autohaus||project?.name||"")+" "+fmtDE(ctx.date);
   const hasPhone=!!(emp?.phone||"").replace(/[^0-9]/g,"");
   function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
+  const mayEdit=store.can("tech_edit");
 
-  return(<Modal title={(ed?"Technikertermin bearbeiten":"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
-    footer={<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
+  return(<Modal title={(ed?(mayEdit?"Technikertermin bearbeiten":"Technikertermin ansehen"):"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
+    footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
       <span className="spacer"></span><button className="btn" onClick={onClose}>Abbrechen</button>
-      <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>}>
+      <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>
+      :<><span className="mini muted">Keine Berechtigung zum Bearbeiten.</span><span className="spacer"></span><button className="btn" onClick={onClose}>Schließen</button></>}>
     <div className="row2">
       <div className="field"><label>Projekt</label>
         <select value={projectNr} onChange={e=>pickProject(e.target.value)}>
@@ -1284,7 +1383,8 @@ function RoleBar({project,assignments,employees}){
         fontSize:11,fontWeight:700,background:on?"var(--green)":"#e2e8f0",color:on?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>);})}</div>);
 }
 function Projekte({store}){
-  const{projects,typen,api,versicherungen,assignments,techAssignments,employees}=store;
+  const{projects,typen,api,versicherungen,assignments,techAssignments,employees,can}=store;
+  const mayCreate=can("proj_create"),mayEdit=can("proj_edit"),mayDelete=can("proj_delete");
   const[q,setQ]=useState("");const[view,setView]=useState("alle");const[fTyp,setFTyp]=useState("");const[fVers,setFVers]=useState("");
   const[edit,setEdit]=useState(null);const[importOpen,setImportOpen]=useState(false);
   const versColor=name=>{const v=(versicherungen||[]).find(x=>x.name===name);return v?v.color:null;};
@@ -1309,14 +1409,14 @@ function Projekte({store}){
       <select style={{width:"auto"}} value={fTyp} onChange={e=>setFTyp(e.target.value)}><option value="">Alle Typen</option>{typen.map(t=><option key={t}>{t}</option>)}</select>
       <select style={{width:"auto"}} value={fVers} onChange={e=>setFVers(e.target.value)}><option value="">Alle Versicherungen</option>{(versicherungen||[]).map(v=><option key={v.name}>{v.name}</option>)}</select>
       <span className="spacer"></span><span className="mini muted">{filtered.length} / {projects.length}</span>
-      <button className="btn" onClick={()=>setImportOpen(true)}><Ic d={ICONS.imp}/> Excel importieren</button>
-      <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neues Projekt</button>
+      {mayCreate&&<button className="btn" onClick={()=>setImportOpen(true)}><Ic d={ICONS.imp}/> Excel importieren</button>}
+      {mayCreate&&<button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neues Projekt</button>}
     </div>
     <div className="tbl-wrap"><table><thead><tr>
       <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Versich.</th><th>Planung (E·B·P·T)</th>
       <th>Eingeplant</th><th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
       {filtered.map(p=>{const vc=versColor(p.versicherung);const stand=effectiveStandort(p);const planned=plannedFor(p);
-        return(<tr key={p.nr} className="clickrow" onClick={()=>setEdit(p)} title="Zum Bearbeiten klicken">
+        return(<tr key={p.nr} className={mayEdit?"clickrow":""} onClick={mayEdit?(()=>setEdit(p)):undefined} title={mayEdit?"Zum Bearbeiten klicken":""}>
         <td style={{fontWeight:600}}>{p.nr}</td>
         <td><span className="flex" style={{gap:7}}>{vc&&<span className="dot" style={{background:vc}} title={p.versicherung}></span>}{p.name}</span>
           <div className="flex wrap" style={{gap:4,marginTop:3}}>
@@ -1334,8 +1434,9 @@ function Projekte({store}){
           <span className="mini">{Math.round((p.fortschritt||0)*100)}%</span></div></td>
         <td><span className={"badge "+(STATUS_COLORS[p.status]||"b-gray")}>{p.status}</span></td>
         <td onClick={e=>e.stopPropagation()}><div className="flex">
-          <button className="btn sm" onClick={()=>setEdit(p)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
-          <button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>);})}
+          {mayEdit&&<button className="btn sm" onClick={()=>setEdit(p)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>}
+          {mayDelete&&<button className="btn ghost sm" onClick={()=>delProj(p.nr)} title="Löschen"><Ic d={ICONS.trash}/></button>}
+          {!mayEdit&&!mayDelete&&<span className="muted mini">—</span>}</div></td></tr>);})}
       {filtered.length===0&&<tr><td colSpan="10"><div className="empty"><div className="big">Keine Projekte</div>
         <div>Lege eins an oder lade die Startdaten in den Einstellungen.</div></div></td></tr>}
     </tbody></table></div>
@@ -1393,9 +1494,9 @@ function ProjectEdit({store,proj,onClose}){
       <div className="field"><label>Standort</label>
         <div className="flex" style={{gap:8}}>
           <select value={f.standort} onChange={e=>set("standort",e.target.value)} style={{maxWidth:200}}>
-            <option value="auto">Automatisch (aus Adresse)</option><option value="inland">Inland</option><option value="ausland">Ausland</option></select>
-          <span className={"badge "+((f.standort==="auto"?autoStand:f.standort)==="ausland"?"b-teal":"b-gray")}>
-            {(f.standort==="auto"?autoStand:f.standort)==="ausland"?"Ausland":"Inland"}{f.standort==="auto"?" (auto)":""}</span></div>
+            <option value="auto">Standard (Inland)</option><option value="inland">Inland</option><option value="ausland">Ausland</option></select>
+          <span className={"badge "+((f.standort==="ausland")?"b-teal":"b-gray")}>
+            {(f.standort==="ausland")?"Ausland":"Inland"}</span></div>
         <label className="flex mini" style={{gap:8,cursor:"pointer",marginTop:8}}><input type="checkbox" style={{width:"auto"}} checked={remote} onChange={e=>setRemote(e.target.checked)}/> Remote-Projekt</label></div></div>
     <div className="row2">
       <div className="field"><label>Startdatum</label><input type="date" value={f.startdatum||""} onChange={e=>set("startdatum",e.target.value)}/></div>
@@ -1512,7 +1613,8 @@ function ImportModal({store,onClose}){
 
 /* ============ MITARBEITER ============ */
 function Mitarbeiter({store}){
-  const{employees,roles,absences,api}=store;const[q,setQ]=useState("");const[edit,setEdit]=useState(null);const[fStatus,setFStatus]=useState("");
+  const{employees,roles,absences,api,can}=store;const[q,setQ]=useState("");const[edit,setEdit]=useState(null);const[fStatus,setFStatus]=useState("");
+  const mayEdit=can("emp_edit");
   const today=todayYMD;
   const isAbsentNow=id=>absences.some(a=>a.employeeId===id&&today>=a.von&&today<=a.bis);
   const filtered=employees.filter(e=>(!q||e.name.toLowerCase().includes(q.toLowerCase())||(e.role||"").toLowerCase().includes(q.toLowerCase()))&&
@@ -1528,10 +1630,10 @@ function Mitarbeiter({store}){
         <option value="">Alle</option><option value="aktiv">Nicht gesperrt</option><option value="gesperrt">Gesperrt</option>
         <option value="abwesend">Aktuell abwesend</option><option value="ausland">Auslandsfreigabe</option></select>
       <span className="spacer"></span><span className="mini muted">{filtered.length} Mitarbeiter</span>
-      <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neuer Mitarbeiter</button></div>
+      {mayEdit&&<button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neuer Mitarbeiter</button>}</div>
     <div className="tbl-wrap"><table><thead><tr><th>Name</th><th>Rolle</th><th>Status</th><th>Reisepass</th><th>E-Mail</th><th>Telefon</th><th></th></tr></thead><tbody>
       {filtered.map(e=>{const pw=passWarnDays(e.pass_gueltig);const absent=isAbsentNow(e.id);
-        return(<tr key={e.id} className="clickrow" onClick={()=>setEdit(e)} title="Zum Bearbeiten klicken">
+        return(<tr key={e.id} className={mayEdit?"clickrow":""} onClick={mayEdit?(()=>setEdit(e)):undefined} title={mayEdit?"Zum Bearbeiten klicken":""}>
         <td style={{fontWeight:600}}>{e.name}</td><td><span className="badge b-blue">{e.role||"–"}</span></td>
         <td><div className="flex wrap" style={{gap:4}}>
           {e.gesperrt&&<span className="badge b-red">🔒 Gesperrt</span>}
@@ -1541,8 +1643,8 @@ function Mitarbeiter({store}){
         <td className="mini">{e.pass_gueltig?<span className={pw!=null&&pw<90?(pw<0?"badge b-red":"badge b-amber"):""}>{fmtDE(e.pass_gueltig)}{pw!=null&&pw<90&&pw>=0?" ("+pw+"T)":pw<0?" abgel.":""}</span>:<span className="muted">—</span>}</td>
         <td className="mini">{e.email||<span className="muted">—</span>}</td><td className="mini">{e.phone||<span className="muted">—</span>}</td>
         <td onClick={ev=>ev.stopPropagation()}><div className="flex">
-          <button className="btn sm" onClick={()=>setEdit(e)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
-          <button className="btn ghost sm" onClick={()=>delEmp(e.id)} title="Löschen"><Ic d={ICONS.trash}/></button></div></td></tr>);})}
+          {mayEdit?<><button className="btn sm" onClick={()=>setEdit(e)} title="Bearbeiten"><Ic d={ICONS.edit}/> Bearbeiten</button>
+          <button className="btn ghost sm" onClick={()=>delEmp(e.id)} title="Löschen"><Ic d={ICONS.trash}/></button></>:<span className="muted mini">—</span>}</div></td></tr>);})}
       {filtered.length===0&&<tr><td colSpan="7"><div className="empty"><div className="big">Keine Mitarbeiter</div></div></td></tr>}
     </tbody></table></div>
     {edit&&<EmpEdit store={store} emp={edit} onClose={()=>setEdit(null)}/>}
@@ -1639,6 +1741,105 @@ function EmpEdit({store,emp,onClose}){
 
     {!isNew&&tab==="log"&&<EmpLogbook store={store} empId={emp.id}/>}
   </Modal>);
+}
+
+/* ============ NUTZERVERWALTUNG (Phase 5) ============ */
+function UserEdit({store,user,onClose}){
+  const{employees,rolePerm,api}=store;const isNew=!user.email0;
+  const[f,setF]=useState({email:user.email||"",name:user.name||"",rolle:user.rolle||"Betrachter",
+    employeeId:user.employeeId||"",active:user.active!==false,permissions:user.permissions||{}});
+  const[adv,setAdv]=useState(false);
+  const set=(k,v)=>setF(o=>({...o,[k]:v}));
+  const eff={...rolePreset(f.rolle,rolePerm),...(f.permissions||{})};
+  function togglePerm(k){setF(o=>({...o,permissions:{...eff,[k]:!eff[k]}}));}
+  function resetPerm(){setF(o=>({...o,permissions:{}}));}
+  async function submit(){if(!f.email.trim()){store.showToast("E-Mail erforderlich");return;}
+    if(await api.saveUser({...f,email:f.email.trim().toLowerCase()},isNew))onClose();}
+  return(<Modal title={isNew?"Neuer Nutzer":"Nutzer bearbeiten"} onClose={onClose} wide
+    footer={<><button className="btn" onClick={onClose}>Abbrechen</button><button className="btn primary" onClick={submit}>Speichern</button></>}>
+    <div className="row2">
+      <div className="field"><label>E-Mail (Login)</label><input type="email" value={f.email} onChange={e=>set("email",e.target.value)} disabled={!isNew} placeholder="name@drs.de"/></div>
+      <div className="field"><label>Name</label><input value={f.name} onChange={e=>set("name",e.target.value)}/></div></div>
+    <div className="row2">
+      <div className="field"><label>Rolle</label><select value={f.rolle} onChange={e=>set("rolle",e.target.value)}>{ROLES_LIST.map(r=><option key={r}>{r}</option>)}</select></div>
+      <div className="field"><label>Verknüpfter Mitarbeiter (für „eigene Termine")</label>
+        <select value={f.employeeId} onChange={e=>set("employeeId",e.target.value)}>
+          <option value="">— keiner —</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div></div>
+    <label className="flex mini" style={{gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" style={{width:"auto"}} checked={f.active} onChange={e=>set("active",e.target.checked)}/> aktiv (Login erlaubt)</label>
+    <div className="field"><button type="button" className="btn ghost sm" onClick={()=>setAdv(a=>!a)}><Ic d={ICONS.chev} style={{transform:adv?"rotate(90deg)":""}}/> Individuelle Rechte (überschreiben die Rolle)</button>
+      {adv&&<div className="diffcol" style={{marginTop:8}}>
+        <div className="flex" style={{marginBottom:6}}><span className="mini muted">Standard ergibt sich aus der Rolle „{f.rolle}". Häkchen hier überschreiben sie.</span>
+          <span className="spacer"></span><button className="btn ghost sm" onClick={resetPerm}>Auf Rolle zurücksetzen</button></div>
+        {PERM_DEFS.map(([k,l])=>(<label key={k} className="flex mini" style={{gap:8,cursor:"pointer",padding:"3px 0"}}>
+          <input type="checkbox" style={{width:"auto"}} checked={!!eff[k]} onChange={()=>togglePerm(k)}/> {l}</label>))}</div>}</div>
+  </Modal>);
+}
+function Nutzerverwaltung({store}){
+  const{appUsers,employees,rolePerm,api,isBootstrap,myEmail,currentUser}=store;
+  const[edit,setEdit]=useState(null);const[view,setView]=useState("users");
+  const empName=id=>{const e=employees.find(x=>x.id===id);return e?e.name:"";};
+  function setMatrix(rolle,k,val){const cur=rolePreset(rolle,rolePerm);const next={...rolePerm,[rolle]:{...cur,[k]:val}};api.setRolePerm(next);}
+  return(<div>
+    <h2 className="ttl">Nutzerverwaltung</h2><div className="sub">Benutzer, Rollen &amp; Rechte · Zugriffssteuerung auf Oberflächen-Ebene</div>
+    {isBootstrap&&<div className="card" style={{marginBottom:16,borderColor:"var(--brand)"}}><div className="card-b">
+      <div style={{fontWeight:600,marginBottom:4}}>Noch keine Benutzer angelegt</div>
+      <p className="muted mini" style={{margin:"0 0 12px"}}>Solange keine Benutzer existieren, hat jeder Angemeldete volle Rechte. Lege dich zuerst als Super-Admin an, danach greifen die Rechte.</p>
+      <button className="btn primary" onClick={()=>api.saveUser({email:myEmail,name:"",rolle:"Super-Admin",active:true,permissions:{}},true)}>Mich ({myEmail}) als Super-Admin anlegen</button></div></div>}
+    <div className="pill-tabs" style={{marginBottom:14}}>
+      <button className={view==="users"?"active":""} onClick={()=>setView("users")}>Benutzer</button>
+      <button className={view==="rights"?"active":""} onClick={()=>setView("rights")}>Rechte je Rolle</button></div>
+    {view==="users"?<>
+      <div className="flex" style={{marginBottom:12}}><span className="spacer"></span>
+        <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neuer Nutzer</button></div>
+      <div className="tbl-wrap"><table><thead><tr><th>E-Mail</th><th>Name</th><th>Rolle</th><th>Mitarbeiter</th><th>Status</th><th></th></tr></thead><tbody>
+        {appUsers.length===0&&<tr><td colSpan="6"><div className="empty"><div className="big">Keine Benutzer</div></div></td></tr>}
+        {appUsers.map(u=>(<tr key={u.email} className="clickrow" onClick={()=>setEdit({...u,email0:u.email})} title="Bearbeiten">
+          <td style={{fontWeight:600}}>{u.email}{u.email===(myEmail||"").toLowerCase()&&<span className="badge b-blue" style={{marginLeft:6}}>Du</span>}</td>
+          <td>{u.name||<span className="muted">—</span>}</td>
+          <td><span className="badge b-violet">{u.rolle}</span></td>
+          <td className="mini">{empName(u.employeeId)||<span className="muted">—</span>}</td>
+          <td>{u.active!==false?<span className="badge b-green">aktiv</span>:<span className="badge b-gray">inaktiv</span>}</td>
+          <td onClick={e=>e.stopPropagation()}><div className="flex">
+            <button className="btn sm" onClick={()=>setEdit({...u,email0:u.email})}><Ic d={ICONS.edit}/> Bearbeiten</button>
+            <button className="btn ghost sm" onClick={()=>{if(u.email===(myEmail||"").toLowerCase()){store.showToast("Eigenen Zugang nicht löschen");return;}if(confirm("Nutzer "+u.email+" löschen?"))api.deleteUser(u.email);}}><Ic d={ICONS.trash}/></button></div></td></tr>))}
+      </tbody></table></div>
+    </>:<>
+      <p className="muted mini" style={{marginTop:0}}>Rechte je Rolle. Super-Admin hat immer alle Rechte. Einzelne Nutzer lassen sich zusätzlich individuell übersteuern (im Benutzer-Dialog).</p>
+      <div className="tbl-wrap"><table><thead><tr><th>Recht</th>{ROLES_LIST.map(r=><th key={r} style={{textAlign:"center"}}>{r}</th>)}</tr></thead><tbody>
+        {PERM_DEFS.map(([k,l])=>(<tr key={k}><td style={{fontWeight:600}}>{l}</td>
+          {ROLES_LIST.map(r=>{const val=!!rolePreset(r,rolePerm)[k];const locked=r==="Super-Admin";
+            return(<td key={r} style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={val} disabled={locked}
+              onChange={e=>setMatrix(r,k,e.target.checked)}/></td>);})}</tr>))}
+      </tbody></table></div>
+    </>}
+    {edit&&<UserEdit store={store} user={edit} onClose={()=>setEdit(null)}/>}
+  </div>);
+}
+
+/* ============ PROTOKOLLE (Phase 5) ============ */
+function Protokolle({store}){
+  const{changeLog,loginLog}=store;const[view,setView]=useState("changes");
+  const fmtTs=ts=>{if(!ts)return"";const d=new Date(ts);return fmtDE(ymd(d))+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");};
+  const shortUA=ua=>{if(!ua)return"—";let s=ua;const m=ua.match(/(Chrome|Firefox|Safari|Edg|OPR)\/[\d.]+/);const os=ua.match(/\(([^)]+)\)/);return (m?m[0]:s.slice(0,30))+(os?" · "+os[1].split(";")[0]:"");};
+  return(<div>
+    <h2 className="ttl">Protokolle</h2><div className="sub">Änderungsprotokoll &amp; Login-Logbuch</div>
+    <div className="pill-tabs" style={{marginBottom:14}}>
+      <button className={view==="changes"?"active":""} onClick={()=>setView("changes")}>Änderungsprotokoll</button>
+      <button className={view==="logins"?"active":""} onClick={()=>setView("logins")}>Login-Logbuch</button></div>
+    {view==="changes"?
+      <div className="tbl-wrap"><table><thead><tr><th style={{width:150}}>Zeitpunkt</th><th>Benutzer</th><th>Aktion</th><th>Details</th></tr></thead><tbody>
+        {changeLog.length===0&&<tr><td colSpan="4"><div className="empty"><div className="big">Noch keine Einträge</div></div></td></tr>}
+        {changeLog.map(r=>(<tr key={r.id}><td className="mini" style={{whiteSpace:"nowrap"}}>{fmtTs(r.ts)}</td>
+          <td className="mini">{r.user_email||"—"}</td><td><span className="badge b-gray">{r.action}</span></td>
+          <td className="mini">{r.details||"—"}</td></tr>))}
+      </tbody></table></div>
+      :
+      <div className="tbl-wrap"><table><thead><tr><th style={{width:150}}>Zeitpunkt</th><th>Benutzer</th><th>Gerät / Browser</th></tr></thead><tbody>
+        {loginLog.length===0&&<tr><td colSpan="3"><div className="empty"><div className="big">Noch keine Anmeldungen protokolliert</div></div></td></tr>}
+        {loginLog.map(r=>(<tr key={r.id}><td className="mini" style={{whiteSpace:"nowrap"}}>{fmtTs(r.ts)}</td>
+          <td className="mini">{r.email||"—"}</td><td className="mini">{shortUA(r.user_agent)}</td></tr>))}
+      </tbody></table></div>}
+  </div>);
 }
 
 /* ============ STATISTIK ============ */
