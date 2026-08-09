@@ -246,7 +246,7 @@ create table if not exists assignments (
   project_nr text, project_nrs jsonb default '[]'::jsonb,
   einsatz text, title text, ort text default 'inland',
   all_day boolean default true, start_time text, end_time text,
-  adresse text, projektrolle text,
+  adresse text, projektrolle text, privat boolean default false,
   note text default '', created_by text, created_at timestamptz default now());
 
 create table if not exists settings (key text primary key, value jsonb);
@@ -304,6 +304,7 @@ alter table assignments add column if not exists end_time text;
 alter table assignments add column if not exists created_by text;
 alter table assignments add column if not exists adresse text;
 alter table assignments add column if not exists projektrolle text;
+alter table assignments add column if not exists privat boolean default false;
 -- Technikerplanung (Phase 2):
 create table if not exists tech_assignments (
   id uuid primary key default gen_random_uuid(),
@@ -358,6 +359,26 @@ const DEFAULT_TYPEN=["Versicherungen","Autohaus Kunden","Hagelcover","Autohaus",
 const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{name:"Nürnberger",color:"#d97706"},
   {name:"Münchner",color:"#db2777"},{name:"R+V",color:"#7c3aed"},{name:"HUK",color:"#0d9488"}];
 const DEFAULT_WORKDAYS=[0,1,2,3,4,5]; // 0=Mo … 6=So  → Mo–Sa
+const PDF_FIELDS=[["kunde","Kunde / Projekt"],["zeit","Uhrzeit (ganztägig / Zeit)"],["adresse","Kundenadresse"],
+  ["versicherung","Versicherung"],["einsatzstatus","Einsatzstatus / Tätigkeit"],["hinweis","Bemerkung"]];
+const DEFAULT_PDF_FIELDS={kunde:true,zeit:true,adresse:true,versicherung:true,einsatzstatus:true,hinweis:true};
+function assignmentPdfLines(a,projects,F){
+  F=F||DEFAULT_PDF_FIELDS;
+  if(a.type==="frei"&&a.privat){const l=["Geblockt"];if(F.zeit!==false)l.push(a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig");return l;}
+  const ps=(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
+  const lines=[];
+  const label=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name||p.alias).join(", ")||"Projekt");
+  if(F.kunde!==false)lines.push(label);
+  const meta=[];
+  if(F.einsatzstatus!==false){const es=a.projektrolle||a.einsatz;if(es)meta.push(es);}
+  if(F.zeit!==false)meta.push(a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig");
+  if(F.versicherung!==false){const v=[...new Set(ps.map(p=>p.versicherung).filter(Boolean))];if(v.length)meta.push("Vers.: "+v.join(", "));}
+  if(a.ort==="ausland")meta.push("Ausland");
+  if(meta.length)lines.push(meta.join(" · "));
+  if(F.adresse!==false){const adrs=[...new Set([...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean))];adrs.forEach(ad=>lines.push("Adresse: "+ad));}
+  if(F.hinweis!==false&&a.note)lines.push("Hinweis: "+a.note);
+  return lines;
+}
 const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker"];
 const FAHRZEUGARTEN=[["PK","Privatkunden"],["GW","Gebrauchtwagen"],["NW","Neuwagen"]];
 const PERM_DEFS=[
@@ -431,11 +452,11 @@ const asgToDb=a=>({employee_id:a.employeeId,date:a.date,type:a.type,project_nr:n
   project_nrs:a.projectNrs||[],einsatz:a.einsatz||null,title:a.title||null,ort:a.ort||"inland",
   all_day:a.allDay!==false,start_time:a.allDay===false?(a.startTime||null):null,
   end_time:a.allDay===false?(a.endTime||null):null,note:a.note||"",created_by:a.createdBy||null,
-  adresse:a.adresse||null,projektrolle:a.projektrolle||null});
+  adresse:a.adresse||null,projektrolle:a.projektrolle||null,privat:!!a.privat});
 const asgFromDb=r=>({id:r.id,employeeId:r.employee_id,date:r.date,type:r.type,
   projectNrs:(r.project_nrs&&r.project_nrs.length)?r.project_nrs:(r.project_nr?[r.project_nr]:[]),
   einsatz:r.einsatz,title:r.title,ort:r.ort,allDay:r.all_day!==false,startTime:r.start_time,
-  endTime:r.end_time,note:r.note,createdBy:r.created_by,adresse:r.adresse||"",projektrolle:r.projektrolle||""});
+  endTime:r.end_time,note:r.note,createdBy:r.created_by,adresse:r.adresse||"",projektrolle:r.projektrolle||"",privat:!!r.privat});
 const techToDb=t=>({employee_id:t.employeeId,project_nr:t.projectNr||null,autohaus:t.autohaus||"",date:t.date,
   all_day:t.allDay!==false,start_time:t.allDay===false?(t.startTime||null):null,end_time:t.allDay===false?(t.endTime||null):null,
   dauer:t.dauer||"",adresse:t.adresse||"",versicherung:t.versicherung||"",vehicles:t.vehicles||[],
@@ -583,6 +604,7 @@ function App({sb,session}){
   const[typen,setTypen]=useState(DEFAULT_TYPEN);const[appUrl,setAppUrl]=useState("");
   const[workdays,setWorkdays]=useState(DEFAULT_WORKDAYS);const[versicherungen,setVersicherungen]=useState(DEFAULT_VERS);
   const[awCapacity,setAwCapacity]=useState(0);const[rolePlanung,setRolePlanung]=useState({});
+  const[pdfFields,setPdfFields]=useState(DEFAULT_PDF_FIELDS);
   const[appUsers,setAppUsers]=useState([]);const[loginLog,setLoginLog]=useState([]);const[changeLog,setChangeLog]=useState([]);
   const[rolePerm,setRolePerm]=useState({});
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
@@ -607,6 +629,7 @@ function App({sb,session}){
       setWorkdays(Array.isArray(sm.workdays)&&sm.workdays.length?sm.workdays:DEFAULT_WORKDAYS);
       setVersicherungen(Array.isArray(sm.versicherungen)?sm.versicherungen:DEFAULT_VERS);
       setAwCapacity(Number(sm.aw_capacity)||0);
+      setPdfFields(sm.pdf_fields&&typeof sm.pdf_fields==="object"&&!Array.isArray(sm.pdf_fields)?{...DEFAULT_PDF_FIELDS,...sm.pdf_fields}:DEFAULT_PDF_FIELDS);
       setRolePlanung(sm.role_planung&&typeof sm.role_planung==="object"&&!Array.isArray(sm.role_planung)?sm.role_planung:{});
       setRolePerm(sm.role_permissions&&typeof sm.role_permissions==="object"&&!Array.isArray(sm.role_permissions)?sm.role_permissions:{});
       const au=await sb.from("app_users").select("*");
@@ -680,7 +703,7 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung,role_permissions:setRolePerm}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung,role_permissions:setRolePerm,pdf_fields:setPdfFields}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
     logChange,
     async saveUser(rec,isNew){
@@ -729,7 +752,8 @@ function App({sb,session}){
   const can=k=>!!perm[k];
   const myEmployeeId=(currentUser&&currentUser.employeeId)||((employees.find(e=>(e.email||"").toLowerCase()===(myEmail||"").toLowerCase())||{}).id)||"";
   const canTermFor=empId=>(empId&&myEmployeeId&&empId===myEmployeeId)?can("term_own"):can("term_others");
-  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,appUsers,loginLog,changeLog,rolePerm,currentUser,isBootstrap,perm,can,myEmployeeId,canTermFor,api,showToast,session,myEmail,reload,schemaWarn};
+  const isAdmin=isBootstrap||["Super-Admin","Admin"].includes(currentUser&&currentUser.rolle);
+  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,appUsers,loginLog,changeLog,rolePerm,currentUser,isBootstrap,isAdmin,perm,can,myEmployeeId,canTermFor,api,showToast,session,myEmail,reload,schemaWarn};
 
   const NAV=[["dash","Dashboard",ICONS.dash,true],["week","Wochenplanung",ICONS.week,can("term_view")],
     ["tech","Technikerplanung",ICONS.tech,can("term_view")],["proj","Projekte",ICONS.proj,can("proj_view")],
@@ -780,6 +804,23 @@ function projLabel(p){return p?(p.alias||p.name):"";}
 function timeLabel(a){return a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")):"";}
 function shortCreator(email){if(!email)return"";return email.split("@")[0];}
 function assignmentProjects(a,projects){return(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);}
+function isPrivateHidden(a,isAdmin){return a&&a.type==="frei"&&a.privat&&!isAdmin;}
+function collectDayStops(empId,date,assignments,techAssignments,projects){
+  const items=[];
+  (assignments||[]).filter(a=>a.employeeId===empId&&a.date===date).forEach(a=>{
+    if(a.type==="frei")return; // freie/private Termine haben i. d. R. keine Kundenadresse für die Route
+    const ps=assignmentProjects(a,projects);
+    [...ps.map(p=>p.adresse).filter(Boolean)].forEach(ad=>items.push({t:a.allDay===false?(a.startTime||""):"",ad}));
+    if(a.adresse)items.push({t:a.allDay===false?(a.startTime||""):"",ad:a.adresse});
+  });
+  (techAssignments||[]).filter(t=>t.employeeId===empId&&t.date===date).forEach(t=>{
+    if(t.adresse)items.push({t:t.allDay===false?(t.startTime||""):"",ad:t.adresse});});
+  items.sort((a,b)=>(a.t||"99:99").localeCompare(b.t||"99:99"));
+  const uniq=[];items.forEach(i=>{if(!uniq.length||uniq[uniq.length-1]!==i.ad)uniq.push(i.ad);});
+  return uniq;
+}
+function dayRouteUrl(stops){if(!stops||!stops.length)return null;
+  return"https://www.google.com/maps/dir/"+stops.map(s=>encodeURIComponent(s)).join("/");}
 function shortName(n){if(!n)return"";const parts=n.split(",");return parts[0].trim();}
 function chipColor(a,projects,versicherungen){
   if(a.type==="frei")return"var(--amber)";
@@ -832,10 +873,9 @@ function buildMessage(emp,a,projects,appUrl){
 
 /* ============ DASHBOARD ============ */
 function Dashboard({store,go}){
-  const{projects,assignments,employees}=store;
+  const{projects,assignments,techAssignments,employees,isAdmin}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
-  function nav(delta){let w=wk+delta,y=yr;if(w<1){y--;w=isoWeek(new Date(y,11,28));}else if(w>isoWeek(new Date(y,11,28))){y++;w=1;}setWk(w);setYr(y);}
   const isThisWeek=wk===isoWeek(now)&&yr===isoYear(now);
   const monday=mondayOfWeek(yr,wk);
   const weekDates=[...Array(7)].map((_,i)=>ymd(new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i)));
@@ -845,35 +885,51 @@ function Dashboard({store,go}){
   const empById=id=>employees.find(e=>e.id===id);
   const auslandWk=weekAssign.filter(a=>a.ort==="ausland").length;
   const byDay=weekDates.map(d=>({date:d,items:weekAssign.filter(a=>a.date===d)}));
+  // KW-Streifen: aktuelle Woche ± Umgebung, anklickbar
+  const refMon=mondayOfWeek(isoYear(now),isoWeek(now));
+  const strip=[];for(let k=-5;k<=10;k++){const dd=new Date(refMon.getFullYear(),refMon.getMonth(),refMon.getDate()+k*7);strip.push({wk:isoWeek(dd),yr:isoYear(dd),d0:new Date(dd),d6:new Date(dd.getFullYear(),dd.getMonth(),dd.getDate()+6),cur:k===0});}
   return(<div>
     <h2 className="ttl">Dashboard</h2><div className="sub">Überblick je Kalenderwoche</div>
-    <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:20}}>
+    <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:16}}>
       <div className="stat"><div className="lbl">Aktive Projekte</div><div className="val">{active.length}</div><div className="foot">von {projects.length} gesamt</div></div>
       <div className="stat"><div className="lbl">Einsätze KW {wk}</div><div className="val">{weekAssign.length}</div><div className="foot">{isThisWeek?"diese Kalenderwoche":"gewählte Woche"}</div></div>
       <div className="stat"><div className="lbl">Auslandseinsätze</div><div className="val">{auslandWk}</div><div className="foot">{isThisWeek?"diese Woche":"gewählte Woche"}</div></div>
       <div className="stat"><div className="lbl">Mitarbeiter</div><div className="val">{employees.length}</div><div className="foot">im Team</div></div></div>
+    <div className="card" style={{marginBottom:16}}><div className="card-b" style={{padding:"10px 12px"}}>
+      <div className="flex" style={{gap:8,marginBottom:8}}>
+        <span style={{fontWeight:700,fontSize:14}}>KW {wk} · {yr}</span>
+        <span className="mini muted">{fmtDEShort(days[0])}–{fmtDEShort(days[6])}</span>
+        {!isThisWeek&&<button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Aktuelle Woche</button>}
+        <span className="spacer"></span>
+        <button className="btn sm" onClick={()=>go("week")}>Wochenplanung <Ic d={ICONS.chev}/></button></div>
+      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+        {strip.map(s=>{const sel=s.wk===wk&&s.yr===yr;
+          return(<button key={s.yr+"-"+s.wk} onClick={()=>{setWk(s.wk);setYr(s.yr);}}
+            className={"btn sm"+(sel?" primary":"")}
+            style={{flex:"0 0 auto",flexDirection:"column",alignItems:"center",gap:0,padding:"7px 12px",lineHeight:1.25,...(s.cur&&!sel?{borderColor:"var(--brand)",color:"var(--brand-d)"}:{})}}
+            title={fmtDEShort(s.d0)+"–"+fmtDEShort(s.d6)+" · "+s.yr}>
+            <span style={{fontWeight:700}}>KW {s.wk}</span>
+            <span style={{fontSize:10,opacity:.85}}>{fmtDEShort(s.d0)}{s.cur?" · heute":""}</span></button>);})}
+      </div></div></div>
     <div className="grid" style={{gridTemplateColumns:"1.3fr 1fr"}}>
-      <div className="card"><div className="card-h" style={{flexWrap:"wrap",gap:8}}>
-        <div className="flex" style={{gap:6}}>
-          <button className="btn sm" onClick={()=>nav(-1)} title="Vorherige KW"><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
-          <h3 style={{margin:0}}>KW {wk} · {yr}</h3>
-          <button className="btn sm" onClick={()=>nav(1)} title="Nächste KW"><Ic d={ICONS.chev}/></button>
-          {!isThisWeek&&<button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>}
-          <span className="mini muted">{fmtDEShort(days[0])}–{fmtDEShort(days[6])}</span></div>
-        <button className="btn sm" onClick={()=>go("week")}>Zur Wochenplanung <Ic d={ICONS.chev}/></button></div>
+      <div className="card"><div className="card-h"><h3 style={{margin:0}}>Einsätze · KW {wk}</h3>
+        <span className="mini muted">{fmtDEShort(days[0])}–{fmtDEShort(days[6])}</span></div>
         <div className="card-b" style={{paddingTop:8}}>
-          {weekAssign.length===0?<div className="empty"><div className="big">Noch keine Einsätze geplant</div></div>:
+          {weekAssign.length===0?<div className="empty"><div className="big">Keine Einsätze in dieser Woche</div></div>:
             byDay.filter(d=>d.items.length>0).map(d=>{const dd=new Date(d.date);
+              const empsToday=[...new Set(d.items.map(a=>a.employeeId))];
               return(<div key={d.date} style={{marginBottom:14}}>
-                <div style={{fontWeight:600,fontSize:12.5,color:"#334155",marginBottom:6,borderBottom:"1px solid var(--line)",paddingBottom:4}}>
-                  {DAYNAMES[(dd.getDay()+6)%7]}, {fmtDE(d.date)}{d.date===todayYMD&&<span className="badge b-blue" style={{marginLeft:8}}>Heute</span>}</div>
-                {d.items.map(a=>{const e=empById(a.employeeId);const ps=assignmentProjects(a,projects);
+                <div className="flex" style={{fontWeight:600,fontSize:12.5,color:"#334155",marginBottom:6,borderBottom:"1px solid var(--line)",paddingBottom:4}}>
+                  <span>{DAYNAMES[(dd.getDay()+6)%7]}, {fmtDE(d.date)}</span>{d.date===todayYMD&&<span className="badge b-blue">Heute</span>}</div>
+                {d.items.map(a=>{const e=empById(a.employeeId);const hidden=isPrivateHidden(a,isAdmin);const ps=hidden?[]:assignmentProjects(a,projects);
                   return(<div key={a.id} className="flex" style={{padding:"4px 0",fontSize:13}}>
                     <span style={{fontWeight:600,minWidth:130}}>{e?e.name:"?"}</span>
-                    <span className="muted">{a.type==="frei"?("🕓 "+(a.title||"Freier Termin")):(ps.map(p=>projLabel(p)).join(", ")||"—")}</span>
+                    <span className="muted">{hidden?"🔒 Geblockt":(a.type==="frei"?("🕓 "+(a.title||"Freier Termin")):(ps.map(p=>projLabel(p)).join(", ")||"—"))}</span>
                     {timeLabel(a)&&<span className="badge b-gray">{timeLabel(a)}</span>}
-                    {a.type!=="frei"&&a.einsatz&&<span className="badge b-gray">{a.einsatz}</span>}
-                    {a.ort==="ausland"&&<span className="badge b-teal">Ausland</span>}</div>);})}
+                    {!hidden&&a.type!=="frei"&&a.einsatz&&<span className="badge b-gray">{a.einsatz}</span>}
+                    {!hidden&&a.ort==="ausland"&&<span className="badge b-teal">Ausland</span>}</div>);})}
+                <div className="flex wrap" style={{gap:6,marginTop:4}}>{empsToday.map(eid=>{const stops=collectDayStops(eid,d.date,assignments,techAssignments,projects);const url=dayRouteUrl(stops);const e=empById(eid);
+                  return url?<a key={eid} href={url} target="_blank" rel="noopener" className="btn ghost sm" style={{padding:"3px 8px"}} title={"Tagesroute "+(e?shortName(e.name):"")+" ("+stops.length+" Stopp"+(stops.length>1?"s":"")+")"}>🧭 {e?shortName(e.name):"Route"}</a>:null;})}</div>
               </div>);})}
         </div></div>
       <div className="card"><div className="card-h"><h3>Aktive Projekte</h3><button className="btn sm" onClick={()=>go("proj")}>Alle <Ic d={ICONS.chev}/></button></div>
@@ -891,7 +947,7 @@ function Dashboard({store,go}){
 
 /* ============ WOCHENPLANUNG ============ */
 function Wochenplanung({store}){
-  const{employees,projects,assignments,absences,api,appUrl,workdays,versicherungen,rolePlanung}=store;
+  const{employees,projects,assignments,techAssignments,absences,api,appUrl,workdays,versicherungen,rolePlanung,pdfFields,isAdmin}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
@@ -912,7 +968,7 @@ function Wochenplanung({store}){
   const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a));
   const visibleEmployees=employees.filter(e=>showsInWeek(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveAssignment(dragId,empId,date);setDragId(null);setDropCell(null);}
-  function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days);}
+  function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days,pdfFields);}
   const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
   const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
   const usedVers=versicherungen.filter(v=>v.active!==false);
@@ -959,19 +1015,23 @@ function Wochenplanung({store}){
             onDrop={e=>{e.preventDefault();onDrop(emp.id,date);}}>
             {abs&&<div className="chip" title={abs.art+(abs.note?" · "+abs.note:"")} style={{background:ABSENCE_COLORS[abs.art]||"#64748b",color:"#fff",borderLeftColor:"rgba(0,0,0,.25)"}}>
               <span className="cn">{abs.art}</span></div>}
-            {items.map(a=>{const ps=assignmentProjects(a,projects);const first=ps[0];
-              const col=chipColor(a,projects,versicherungen);
-              const label=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||a.projectNrs.join(", "));
-              const prog=a.type!=="frei"&&ps.length===1?Math.round((first.fortschritt||0)*100)+"%":"";
-              return(<div key={a.id} className={"chip"+(a.type==="frei"?" frei":"")}
-                draggable onDragStart={()=>setDragId(a.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
-                style={{borderLeftColor:col}} title={label+(first?.versicherung?"\nVersicherung: "+first.versicherung:"")+(a.projektrolle?"\nRolle: "+a.projektrolle:"")+(a.createdBy?"\nEingetragen von: "+a.createdBy:"")}
-                onClick={e=>{e.stopPropagation();setModal({employeeId:emp.id,date,editing:a});}}>
-                {a.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
+            {items.map(a=>{const hidden=isPrivateHidden(a,isAdmin);const ps=hidden?[]:assignmentProjects(a,projects);const first=ps[0];
+              const col=hidden?"#94a3b8":chipColor(a,projects,versicherungen);
+              const label=hidden?"Geblockt":(a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||a.projectNrs.join(", ")));
+              const prog=!hidden&&a.type!=="frei"&&ps.length===1?Math.round((first.fortschritt||0)*100)+"%":"";
+              return(<div key={a.id} className={"chip"+((a.type==="frei"||hidden)?" frei":"")}
+                draggable={!hidden} onDragStart={()=>!hidden&&setDragId(a.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
+                style={{borderLeftColor:col,...(hidden?{background:"#f1f5f9"}:{})}} title={hidden?"Privater Termin (nur für Admins sichtbar)":label+(first?.versicherung?"\nVersicherung: "+first.versicherung:"")+(a.projektrolle?"\nRolle: "+a.projektrolle:"")+(a.createdBy?"\nEingetragen von: "+a.createdBy:"")}
+                onClick={e=>{e.stopPropagation();if(hidden){store.showToast("Privater Termin – nur für Admins sichtbar");return;}setModal({employeeId:emp.id,date,editing:a});}}>
+                {!hidden&&a.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
+                {hidden&&<span className="ausland" title="privat">🔒</span>}
                 <span className="cn">{label}</span>
-                <span className="cs">{[a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz),timeLabel(a),prog].filter(Boolean).join(" · ")}</span>
-                {a.createdBy&&<span className="cby">✎ {shortCreator(a.createdBy)}</span>}
+                <span className="cs">{[hidden?"":(a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz)),timeLabel(a),prog].filter(Boolean).join(" · ")||"—"}</span>
+                {!hidden&&a.createdBy&&<span className="cby">✎ {shortCreator(a.createdBy)}</span>}
               </div>);})}
+            {(()=>{const stops=collectDayStops(emp.id,date,assignments,techAssignments,projects);const url=dayRouteUrl(stops);
+              return url?<a href={url} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} title={"Tagesroute ("+stops.length+" Stopp"+(stops.length>1?"s":"")+") in Google Maps"}
+                style={{position:"absolute",bottom:3,right:5,fontSize:14,textDecoration:"none"}}>🧭</a>:null;})()}
             {items.length===0&&!abs&&<div className="add-hint">+</div>}
           </div>);})}
       </React.Fragment>))}
@@ -996,6 +1056,7 @@ function AssignModal({store,ctx,onClose}){
   const[handTo,setHandTo]=useState("");
   const[projektrolle,setProjektrolle]=useState(ed?.projektrolle||"");
   const[freeAddr,setFreeAddr]=useState(ed?.adresse||"");
+  const[privat,setPrivat]=useState(!!ed?.privat);
   const activeProjects=projects.filter(p=>p.status!=="Beendet");
   const filtered=activeProjects.filter(p=>!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q));
   function toggleProj(nr){setSelProjects(s=>s.includes(nr)?s.filter(x=>x!==nr):[...s,nr]);}
@@ -1018,7 +1079,8 @@ function AssignModal({store,ctx,onClose}){
     const base={employeeId:ctx.employeeId,type:mode,projectNrs:mode==="project"?selProjects:[],
       einsatz:mode==="project"?eins:null,title:mode==="frei"?title.trim():null,ort,note,allDay,
       startTime:allDay?null:startTime,endTime:allDay?null:endTime,
-      adresse:mode==="frei"?freeAddr.trim():null,projektrolle:mode==="project"?(projektrolle||null):null};
+      adresse:mode==="frei"?freeAddr.trim():null,projektrolle:mode==="project"?(projektrolle||null):null,
+      privat:mode==="frei"?privat:false};
     if(ed){
       const ok=await api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy});
       if(!ok)return;
@@ -1094,6 +1156,9 @@ function AssignModal({store,ctx,onClose}){
       <div className="field"><label>Adresse (optional – für Google-Maps-Link)</label>
         <input placeholder="Straße Hausnr, PLZ Ort" value={freeAddr} onChange={e=>setFreeAddr(e.target.value)}/>
         {freeAddr.trim()&&<a href={mapsLink(freeAddr)} target="_blank" rel="noopener" className="btn ghost sm" style={{marginTop:6}}><Ic d={ICONS.pin}/> Route öffnen</a>}</div>
+      <div className="field"><label className="flex" style={{gap:8,cursor:"pointer",fontWeight:600}}>
+        <input type="checkbox" style={{width:"auto"}} checked={privat} onChange={e=>setPrivat(e.target.checked)}/> 🔒 Privater Termin</label>
+        <div className="mini muted" style={{marginTop:4}}>Nur Admins/Super-Admins sehen Titel &amp; Details. Für alle anderen erscheint der Termin nur als „Geblockt" (Terminblocker).</div></div>
     </>}
 
     <div className="field"><label>Zeit</label>
@@ -1136,7 +1201,7 @@ function AssignModal({store,ctx,onClose}){
 }
 
 function SendModal({store,onClose}){
-  const{employees,assignments,projects,appUrl,workdays}=store;
+  const{employees,assignments,techAssignments,projects,appUrl,workdays,pdfFields}=store;
   const now=new Date();const nx=new Date(now);nx.setDate(now.getDate()+7);
   const wk=isoWeek(nx),yr=isoYear(nx);const monday=mondayOfWeek(yr,wk);
   const days=workDaysOfWeek(monday,workdays).map(w=>w.date);
@@ -1147,11 +1212,15 @@ function SendModal({store,onClose}){
     let t=`Hallo ${e.name.split(",")[1]?.trim()||e.name}, dein Einsatzplan für KW ${wk} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}):\n`;
     days.forEach((dd,i)=>{const d=ymd(dd);const dayItems=items.filter(a=>a.date===d);if(!dayItems.length)return;
       t+=`\n${dname(dd)} ${fmtDEShort(dd)}:`;
-      dayItems.forEach(a=>{const ps=assignmentProjects(a,projects);
+      dayItems.forEach(a=>{
+        if(a.type==="frei"&&a.privat){t+=`\n  • Geblockt${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}`;return;}
+        const ps=assignmentProjects(a,projects);
         const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Projekt");
         t+=`\n  • ${lbl}${a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":"")}${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}${a.ort==="ausland"?" [Ausland]":""}`;
         const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
-        adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});});
+        adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});
+      const stops=collectDayStops(e.id,d,assignments,techAssignments,projects);const url=dayRouteUrl(stops);
+      if(url)t+=`\n    🧭 Tagesroute: ${url}`;});
     if(appUrl)t+=`\n\nBei Änderungen bitte aktiv in den Plan schauen: ${appUrl}`;
     return t;}
   return(<Modal title={"Einsatzpläne senden · nächste Woche (KW "+wk+")"} onClose={onClose} wide
@@ -1163,7 +1232,7 @@ function SendModal({store,onClose}){
       rows.map(({e,items})=>{const msg=personText(e,items);
         return(<div key={e.id} className="send-row">
           <div><div style={{fontWeight:600}}>{e.name}</div><div className="mini muted">{items.length} Einsätze · KW {wk}</div></div>
-          <button className="btn sm" onClick={()=>generatePersonPDF(e,items,projects,days,wk,yr,appUrl)}><Ic d={ICONS.pdf}/> PDF</button>
+          <button className="btn sm" onClick={()=>generatePersonPDF(e,items,projects,days,wk,yr,appUrl,pdfFields)}><Ic d={ICONS.pdf}/> PDF</button>
           <a className="btn sm green" href={(e.phone||"").replace(/[^0-9]/g,"")?waLink(e.phone,msg):undefined} target="_blank" rel="noopener"
              style={(e.phone||"").replace(/[^0-9]/g,"")?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.wa}/></a>
           <a className="btn sm primary" href={e.email?mailLink(e.email,"Dein Einsatzplan KW "+wk,msg):undefined}
@@ -1402,7 +1471,7 @@ function TechModal({store,ctx,onClose}){
 
 /* ============ PDF generators ============ */
 function ensurePDF(){if(!window.jspdf){alert("PDF-Bibliothek nicht geladen (Internet nötig).");return null;}return window.jspdf.jsPDF;}
-function generateWeekPDF(employees,assignments,projects,wk,yr,days){
+function generateWeekPDF(employees,assignments,projects,wk,yr,days,pdfFields){
   const JsPDF=ensurePDF();if(!JsPDF)return;const dn=d=>DAYNAMES[(d.getDay()+6)%7];
   const doc=new JsPDF({orientation:"landscape",unit:"mm",format:"a4"});
   doc.setFontSize(14);doc.text("Wochenplan KW "+wk+" / "+yr,14,14);
@@ -1410,17 +1479,14 @@ function generateWeekPDF(employees,assignments,projects,wk,yr,days){
   const head=[["Mitarbeiter",...days.map(d=>dn(d)+" "+fmtDEShort(d))]];
   const body=employees.map(e=>{const row=[e.name];
     days.forEach(d=>{const date=ymd(d);const items=assignments.filter(a=>a.employeeId===e.id&&a.date===date);
-      row.push(items.map(a=>{const ps=(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
-        const lbl=a.type==="frei"?(a.title||"Frei"):(ps.map(p=>p.alias||p.name).join(", ")||"Projekt");
-        const t=a.allDay===false&&a.startTime?a.startTime+(a.endTime?"-"+a.endTime:""):"";
-        return lbl+(a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":""))+(t?" "+t:"")+(a.ort==="ausland"?" [Ausl.]":"");}).join("\n"));});
+      row.push(items.map(a=>assignmentPdfLines(a,projects,pdfFields).join("\n")).join("\n\n"));});
     return row;});
   doc.autoTable({head,body,startY:24,styles:{fontSize:7,cellPadding:1.5,valign:"top",overflow:"linebreak"},
-    headStyles:{fillColor:[37,99,235],fontSize:7.5},columnStyles:{0:{fontStyle:"bold",cellWidth:32}},
+    headStyles:{fillColor:[37,99,235],fontSize:7.5},columnStyles:{0:{fontStyle:"bold",cellWidth:30}},
     theme:"grid",margin:{left:8,right:8}});
   doc.save("Wochenplan_KW"+wk+"_"+yr+".pdf");
 }
-function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl){
+function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl,pdfFields){
   const JsPDF=ensurePDF();if(!JsPDF)return;const dn=d=>DAYNAMES[(d.getDay()+6)%7];
   const doc=new JsPDF({unit:"mm",format:"a4"});
   doc.setFontSize(15);doc.text("Einsatzplan · "+emp.name,14,16);
@@ -1429,13 +1495,7 @@ function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl){
   const body=[];
   days.forEach((d,i)=>{const date=ymd(d);const dayItems=items.filter(a=>a.date===date);
     if(!dayItems.length){body.push([dn(d)+" "+fmtDEShort(d),"—"]);return;}
-    dayItems.forEach((a,idx)=>{const ps=(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);
-      const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Projekt");
-      const t=a.allDay===false&&a.startTime?a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr":"ganztägig";
-      let cell=lbl+"\n"+[a.projektrolle||a.einsatz,t,a.ort==="ausland"?"Ausland":""].filter(Boolean).join(" · ");
-      const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
-      if(adrs.length)cell+="\n"+adrs.map(ad=>"Adresse: "+ad).join("\n");
-      if(a.note)cell+="\nHinweis: "+a.note;
+    dayItems.forEach((a,idx)=>{const cell=assignmentPdfLines(a,projects,pdfFields).join("\n");
       body.push([idx===0?dn(d)+" "+fmtDEShort(d):"",cell]);});});
   doc.autoTable({head:[["Tag","Einsatz"]],body,startY:28,styles:{fontSize:9,cellPadding:2.5,valign:"top",overflow:"linebreak"},
     headStyles:{fillColor:[37,99,235]},columnStyles:{0:{fontStyle:"bold",cellWidth:26}},theme:"grid",margin:{left:12,right:12}});
@@ -2007,7 +2067,7 @@ function RolePlanungEditor({roles,employees,rolePlanung,api,showToast}){
   </div></div>);
 }
 function Einstellungen({store}){
-  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,api,showToast,employees,projects,assignments}=store;
+  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,api,showToast,employees,projects,assignments}=store;
   const[seeding,setSeeding]=useState(false);const[urlVal,setUrlVal]=useState(appUrl);const[copied,setCopied]=useState("");
   const[awVal,setAwVal]=useState(awCapacity||0);
   function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,exported:new Date().toISOString()};
@@ -2036,6 +2096,13 @@ function Einstellungen({store}){
       <p className="muted mini" style={{marginTop:0}}>Die öffentliche Adresse dieser App (z. B. deine GitHub-Pages-URL). Sie wird in WhatsApp-/E-Mail-Nachrichten und PDF-Plänen mitgeschickt, damit Mitarbeiter bei Änderungen selbst reinschauen können.</p>
       <div className="flex"><input value={urlVal} onChange={e=>setUrlVal(e.target.value)} placeholder="https://deinname.github.io/personalplan/" style={{maxWidth:420}}/>
         <button className="btn primary sm" onClick={()=>{api.setSetting("app_url",urlVal.trim());showToast("App-Link gespeichert");}}>Speichern</button></div></div></div>
+
+    <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>PDF-Inhalt · Wochen- &amp; Mitarbeiterpläne</h3></div><div className="card-b">
+      <p className="muted mini" style={{marginTop:0}}>Lege fest, welche Angaben je Einsatz in den PDF-Plänen erscheinen. Gilt für den Wochenplan-PDF und die persönlichen Pläne beim Versand.</p>
+      <div className="flex wrap" style={{gap:10}}>{PDF_FIELDS.map(([k,label])=>{const on=pdfFields[k]!==false;
+        return(<label key={k} className="flex mini" style={{gap:7,cursor:"pointer",border:"1px solid "+(on?"var(--brand)":"var(--line)"),background:on?"var(--brand-l)":"#fff",borderRadius:8,padding:"8px 11px"}}>
+          <input type="checkbox" style={{width:"auto"}} checked={on} onChange={e=>{api.setSetting("pdf_fields",{...pdfFields,[k]:e.target.checked});showToast("PDF-Einstellung gespeichert");}}/> {label}</label>);})}</div>
+      <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Kundenadresse = die im Projekt hinterlegte Adresse (bzw. bei freien Terminen die dort eingegebene). Auslandseinsätze werden immer gekennzeichnet.</p></div></div>
 
     <ListEditor title="Rollen" desc="Rollen für Mitarbeiter – frei definierbar (z. B. Projektleiter, Projektassistenz, Techniker, Monteur)." skey="roles" items={roles} api={api} showToast={showToast}/>
     <RolePlanungEditor roles={roles} employees={employees} rolePlanung={rolePlanung} api={api} showToast={showToast}/>
