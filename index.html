@@ -833,22 +833,33 @@ function buildMessage(emp,a,projects,appUrl){
 /* ============ DASHBOARD ============ */
 function Dashboard({store,go}){
   const{projects,assignments,employees}=store;
-  const now=new Date();const wk=isoWeek(now),yr=isoYear(now);const monday=mondayOfWeek(yr,wk);
+  const now=new Date();
+  const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
+  function nav(delta){let w=wk+delta,y=yr;if(w<1){y--;w=isoWeek(new Date(y,11,28));}else if(w>isoWeek(new Date(y,11,28))){y++;w=1;}setWk(w);setYr(y);}
+  const isThisWeek=wk===isoWeek(now)&&yr===isoYear(now);
+  const monday=mondayOfWeek(yr,wk);
   const weekDates=[...Array(7)].map((_,i)=>ymd(new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i)));
+  const days=weekDates.map(s=>{const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);});
   const weekAssign=assignments.filter(a=>weekDates.includes(a.date));
   const active=projects.filter(isActiveProject);
   const empById=id=>employees.find(e=>e.id===id);
   const auslandWk=weekAssign.filter(a=>a.ort==="ausland").length;
   const byDay=weekDates.map(d=>({date:d,items:weekAssign.filter(a=>a.date===d)}));
   return(<div>
-    <h2 className="ttl">Dashboard</h2><div className="sub">Was diese Woche ansteht</div>
+    <h2 className="ttl">Dashboard</h2><div className="sub">Überblick je Kalenderwoche</div>
     <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:20}}>
       <div className="stat"><div className="lbl">Aktive Projekte</div><div className="val">{active.length}</div><div className="foot">von {projects.length} gesamt</div></div>
-      <div className="stat"><div className="lbl">Einsätze KW {wk}</div><div className="val">{weekAssign.length}</div><div className="foot">diese Kalenderwoche</div></div>
-      <div className="stat"><div className="lbl">Auslandseinsätze</div><div className="val">{auslandWk}</div><div className="foot">diese Woche</div></div>
+      <div className="stat"><div className="lbl">Einsätze KW {wk}</div><div className="val">{weekAssign.length}</div><div className="foot">{isThisWeek?"diese Kalenderwoche":"gewählte Woche"}</div></div>
+      <div className="stat"><div className="lbl">Auslandseinsätze</div><div className="val">{auslandWk}</div><div className="foot">{isThisWeek?"diese Woche":"gewählte Woche"}</div></div>
       <div className="stat"><div className="lbl">Mitarbeiter</div><div className="val">{employees.length}</div><div className="foot">im Team</div></div></div>
     <div className="grid" style={{gridTemplateColumns:"1.3fr 1fr"}}>
-      <div className="card"><div className="card-h"><h3>Diese Woche · KW {wk}</h3>
+      <div className="card"><div className="card-h" style={{flexWrap:"wrap",gap:8}}>
+        <div className="flex" style={{gap:6}}>
+          <button className="btn sm" onClick={()=>nav(-1)} title="Vorherige KW"><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
+          <h3 style={{margin:0}}>KW {wk} · {yr}</h3>
+          <button className="btn sm" onClick={()=>nav(1)} title="Nächste KW"><Ic d={ICONS.chev}/></button>
+          {!isThisWeek&&<button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>}
+          <span className="mini muted">{fmtDEShort(days[0])}–{fmtDEShort(days[6])}</span></div>
         <button className="btn sm" onClick={()=>go("week")}>Zur Wochenplanung <Ic d={ICONS.chev}/></button></div>
         <div className="card-b" style={{paddingTop:8}}>
           {weekAssign.length===0?<div className="empty"><div className="big">Noch keine Einsätze geplant</div></div>:
