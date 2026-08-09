@@ -404,6 +404,13 @@ function fmtDEShort(d){return String(d.getDate()).padStart(2,"0")+"."+String(d.g
 const DAYNAMES=["Mo","Di","Mi","Do","Fr","Sa","So"];
 const todayYMD=ymd(new Date());
 const uid=()=>Math.random().toString(36).slice(2,10);
+const PROJECT_INACTIVE_STATUS=["Finance","Beendet","fiktiv"];
+function isActiveProject(p){
+  if(!p)return false;
+  if(PROJECT_INACTIVE_STATUS.includes(p.status))return false;      // Finance/Beendet/fiktiv = nicht aktiv
+  if(p.enddatum&&String(p.enddatum)<todayYMD)return false;         // Enddatum in der Vergangenheit = nicht aktiv
+  return true;
+}
 
 /* ============ Mappers ============ */
 const projToDb=p=>({nr:p.nr,name:p.name||"",alias:p.alias||"",typ:p.typ||"",leiter:p.leiter||[],
@@ -829,7 +836,7 @@ function Dashboard({store,go}){
   const now=new Date();const wk=isoWeek(now),yr=isoYear(now);const monday=mondayOfWeek(yr,wk);
   const weekDates=[...Array(7)].map((_,i)=>ymd(new Date(monday.getFullYear(),monday.getMonth(),monday.getDate()+i)));
   const weekAssign=assignments.filter(a=>weekDates.includes(a.date));
-  const active=projects.filter(p=>["Reparatur","Begutachtung","Vorbereitung","Finance"].includes(p.status));
+  const active=projects.filter(isActiveProject);
   const empById=id=>employees.find(e=>e.id===id);
   const auslandWk=weekAssign.filter(a=>a.ort==="ausland").length;
   const byDay=weekDates.map(d=>({date:d,items:weekAssign.filter(a=>a.date===d)}));
@@ -1427,7 +1434,6 @@ function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl){
 }
 
 /* ============ PROJEKTE ============ */
-const ACTIVE_STATUS=["Reparatur","Begutachtung","Finance"];
 const PLANNED_STATUS=["Vorbereitung"];
 function RoleBar({project,assignments,employees}){
   const roles=computeRoles(project,assignments,employees);
@@ -1447,7 +1453,7 @@ function Projekte({store}){
     techAssignments.filter(t=>t.projectNr===p.nr&&t.date>=todayYMD).forEach(t=>{const e=employees.find(x=>x.id===t.employeeId);if(e)m.set(e.id,e);});
     return[...m.values()];};
   const filtered=projects.filter(p=>(!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q))&&
-    (view==="alle"||(view==="aktiv"&&ACTIVE_STATUS.includes(p.status))||(view==="geplant"&&PLANNED_STATUS.includes(p.status)))&&
+    (view==="alle"||(view==="aktiv"&&isActiveProject(p))||(view==="geplant"&&PLANNED_STATUS.includes(p.status)))&&
     (!fTyp||p.typ===fTyp)&&(!fVers||p.versicherung===fVers));
   function delProj(nr){if(confirm("Projekt "+nr+" wirklich löschen?"))api.deleteProject(nr);}
   return(<div>
