@@ -984,7 +984,6 @@ function Wochenplanung({store}){
       <button className="btn sm" onClick={()=>nav(1)}><Ic d={ICONS.chev}/></button>
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
-      <button className="btn sm" onClick={()=>{if(confirm("Alle Einsätze dieser Woche in die Folgewoche (KW "+(wk+1)+") kopieren?"))api.copyWeek(weekDates);}}><Ic d={ICONS.copy}/> → Folgewoche</button>
       <button className="btn sm" onClick={makePDF}><Ic d={ICONS.pdf}/> PDF</button>
       <a className="btn sm green" href={waLink("",wholeMsg)} target="_blank" rel="noopener"><Ic d={ICONS.wa}/> Teilen</a>
       <button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne senden</button>
@@ -1231,7 +1230,7 @@ function SendModal({store,onClose}){
     <p className="muted mini" style={{marginTop:0}}>Pro Person: PDF herunterladen und/oder direkt als Nachricht (mit Zusammenfassung + Plan-Link) senden.
       {!appUrl&&<> <b>Tipp:</b> Hinterlege in den Einstellungen den „App-Link", damit der Link automatisch mitgeschickt wird.</>}</p>
     {rows.length===0?<div className="empty"><div className="big">Für nächste Woche ist noch nichts geplant</div>
-      <div>Kopiere z. B. diese Woche mit „→ Folgewoche kopieren".</div></div>:
+      <div>Für nächste Woche sind noch keine Einsätze geplant.</div></div>:
       rows.map(({e,items})=>{const msg=personText(e,items);
         return(<div key={e.id} className="send-row">
           <div><div style={{fontWeight:600}}>{e.name}</div><div className="mini muted">{items.length} Einsätze · KW {wk}</div></div>
@@ -1299,7 +1298,6 @@ function Technikerplanung({store}){
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
       <span className="badge b-teal" title="Geplante AW dieser Woche (sichtbare Techniker)">Σ AW Woche: {fmtAW(weekPlanned)}</span>
-      <button className="btn sm" onClick={()=>{if(confirm("Alle Technikertermine dieser Woche in die Folgewoche kopieren?"))api.copyTechWeek(weekDates);}}><Ic d={ICONS.copy}/> → Folgewoche</button>
     </div>
     <div className="flex wrap" style={{marginBottom:10,gap:8}}>
       <div style={{position:"relative"}}>
