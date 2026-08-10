@@ -1079,8 +1079,8 @@ function DayPopup({store,ctx,onEdit,onAdd,onClose}){
       const label=hidden?"Geblockt":(a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||"Projekt"));
       const col=hidden?"#94a3b8":chipColor(a,projects,versicherungen);
       const addrs=hidden?[]:assignmentAddresses(a,projects);
-      const isFirst=a.id===firstAddrId;
-      const rUrl=addrs.length?(isFirst?dayRouteUrl(addrs,home):navRouteUrl(addrs)):null;
+      const rHome=addrs.length&&home?dayRouteUrl(addrs,home):null;
+      const rStd=addrs.length?navRouteUrl(addrs):null;
       const meta=[hidden?"":(a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz)),
         a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig",
         a.ort==="ausland"?"Ausland":""].filter(Boolean).join(" · ");
@@ -1089,7 +1089,8 @@ function DayPopup({store,ctx,onEdit,onAdd,onClose}){
           <div style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{hidden&&<span title="privat">🔒 </span>}{label}</div>
           <div className="mini muted">{meta}</div></div>
         <button className="btn sm" onClick={()=>onEdit(a)}><Ic d={ICONS.edit}/> {mayEdit?"Bearbeiten":"Ansehen"}</button>
-        {rUrl&&<a className="btn sm" href={rUrl} target="_blank" rel="noopener" title={isFirst&&home?"Ab Wohnort":"Ab aktuellem Standort"}><Ic d={ICONS.pin}/> {isFirst&&home?"Route ab Wohnort":"Route ab Standort"}</a>}
+        {rHome&&<a className="btn sm" href={rHome} target="_blank" rel="noopener" title="Route ab Wohnort des Mitarbeiters">🏠 ab Wohnort</a>}
+        {rStd&&<a className="btn sm" href={rStd} target="_blank" rel="noopener" title="Route ab aktuellem Standort (GPS)">📍 ab Standort</a>}
       </div>);})}
   </Modal>);
 }
