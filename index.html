@@ -822,8 +822,13 @@ function collectDayStops(empId,date,assignments,techAssignments,projects){
   const uniq=[];items.forEach(i=>{if(!uniq.length||uniq[uniq.length-1]!==i.ad)uniq.push(i.ad);});
   return uniq;
 }
-function dayRouteUrl(stops){if(!stops||!stops.length)return null;
-  return"https://www.google.com/maps/dir/"+stops.map(s=>encodeURIComponent(s)).join("/");}
+function dayRouteUrl(stops,start){if(!stops||!stops.length)return null;
+  const pts=[...(start&&String(start).trim()?[String(start).trim()]:[]),...stops];
+  return"https://www.google.com/maps/dir/"+pts.map(s=>encodeURIComponent(s)).join("/");}
+function assignmentAddresses(a,projects){
+  if(a.type==="frei")return a.adresse?[a.adresse]:[];
+  const ps=assignmentProjects(a,projects);const arr=[...ps.map(p=>p.adresse).filter(Boolean)];
+  if(a.adresse)arr.push(a.adresse);return[...new Set(arr)];}
 function shortName(n){if(!n)return"";const parts=n.split(",");return parts[0].trim();}
 function chipColor(a,projects,versicherungen){
   if(a.type==="frei")return"var(--amber)";
@@ -931,7 +936,7 @@ function Dashboard({store,go}){
                     {timeLabel(a)&&<span className="badge b-gray">{timeLabel(a)}</span>}
                     {!hidden&&a.type!=="frei"&&a.einsatz&&<span className="badge b-gray">{a.einsatz}</span>}
                     {!hidden&&a.ort==="ausland"&&<span className="badge b-teal">Ausland</span>}</div>);})}
-                <div className="flex wrap" style={{gap:6,marginTop:4}}>{empsToday.map(eid=>{const stops=collectDayStops(eid,d.date,assignments,techAssignments,projects);const url=dayRouteUrl(stops);const e=empById(eid);
+                <div className="flex wrap" style={{gap:6,marginTop:4}}>{empsToday.map(eid=>{const stops=collectDayStops(eid,d.date,assignments,techAssignments,projects);const e=empById(eid);const url=dayRouteUrl(stops,e&&e.adresse);
                   return url?<a key={eid} href={url} target="_blank" rel="noopener" className="btn ghost sm" style={{padding:"3px 8px"}} title={"Tagesroute "+(e?shortName(e.name):"")+" ("+stops.length+" Stopp"+(stops.length>1?"s":"")+")"}>🧭 {e?shortName(e.name):"Route"}</a>:null;})}</div>
               </div>);})}
         </div></div>
@@ -954,7 +959,7 @@ function Wochenplanung({store}){
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
-  const[sendOpen,setSendOpen]=useState(false);
+  const[sendOpen,setSendOpen]=useState(false);const[dayPop,setDayPop]=useState(null);
   const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");
   const monday=mondayOfWeek(yr,wk);
   const wdays=workDaysOfWeek(monday,workdays);
@@ -1017,33 +1022,65 @@ function Wochenplanung({store}){
             onDrop={e=>{e.preventDefault();onDrop(emp.id,date);}}>
             {abs&&<div className="chip" title={abs.art+(abs.note?" · "+abs.note:"")} style={{background:ABSENCE_COLORS[abs.art]||"#64748b",color:"#fff",borderLeftColor:"rgba(0,0,0,.25)"}}>
               <span className="cn">{abs.art}</span></div>}
-            {items.map(a=>{const hidden=isPrivateHidden(a,isAdmin);const ps=hidden?[]:assignmentProjects(a,projects);const first=ps[0];
-              const col=hidden?"#94a3b8":chipColor(a,projects,versicherungen);
-              const label=hidden?"Geblockt":(a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||a.projectNrs.join(", ")));
-              const prog=!hidden&&a.type!=="frei"&&ps.length===1?Math.round((first.fortschritt||0)*100)+"%":"";
-              return(<div key={a.id} className={"chip"+((a.type==="frei"||hidden)?" frei":"")}
-                draggable={!hidden} onDragStart={()=>!hidden&&setDragId(a.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
-                style={{borderLeftColor:col,...(hidden?{background:"#f1f5f9"}:{})}} title={hidden?"Privater Termin (nur für Admins sichtbar)":label+(first?.versicherung?"\nVersicherung: "+first.versicherung:"")+(a.projektrolle?"\nRolle: "+a.projektrolle:"")+(a.createdBy?"\nEingetragen von: "+a.createdBy:"")}
-                onClick={e=>{e.stopPropagation();if(hidden){store.showToast("Privater Termin – nur für Admins sichtbar");return;}setModal({employeeId:emp.id,date,editing:a});}}>
-                {!hidden&&a.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
-                {hidden&&<span className="ausland" title="privat">🔒</span>}
-                <span className="cn">{label}</span>
-                <span className="cs">{[hidden?"":(a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz)),timeLabel(a),prog].filter(Boolean).join(" · ")||"—"}</span>
-                {!hidden&&a.createdBy&&<span className="cby">✎ {shortCreator(a.createdBy)}</span>}
-              </div>);})}
-            {(()=>{const stops=collectDayStops(emp.id,date,assignments,techAssignments,projects);const url=dayRouteUrl(stops);
-              return url?<a href={url} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()} title={"Tagesroute ("+stops.length+" Stopp"+(stops.length>1?"s":"")+") in Google Maps"}
-                style={{position:"absolute",bottom:3,right:5,fontSize:14,textDecoration:"none"}}>🧭</a>:null;})()}
+            {items.length>0&&(()=>{const a0=items[0];const hidden0=isPrivateHidden(a0,isAdmin);const ps0=hidden0?[]:assignmentProjects(a0,projects);
+              const col=hidden0?"#94a3b8":chipColor(a0,projects,versicherungen);
+              const label0=hidden0?"Geblockt":(a0.type==="frei"?(a0.title||"Freier Termin"):(ps0.map(p=>projLabel(p)).join(", ")||a0.projectNrs.join(", ")));
+              const more=items.length-1;const single=items.length===1;
+              return(<div className={"chip"+((a0.type==="frei"||hidden0)?" frei":"")}
+                draggable={single&&!hidden0} onDragStart={()=>single&&!hidden0&&setDragId(a0.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
+                style={{borderLeftColor:col,...(hidden0?{background:"#f1f5f9"}:{})}}
+                title={more>0?items.length+" Termine – klicken zum Aufklappen":"Klicken für Details / Route"}
+                onClick={e=>{e.stopPropagation();setDayPop({employeeId:emp.id,date});}}>
+                {!hidden0&&a0.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
+                {hidden0&&<span className="ausland" title="privat">🔒</span>}
+                <span className="cn">{label0}{more>0?<span className="badge b-gray" style={{marginLeft:6,padding:"0 6px"}}>+{more}</span>:null}</span>
+                <span className="cs">{[hidden0?"":(a0.projektrolle||(a0.type==="frei"?"Freier Termin":a0.einsatz)),timeLabel(a0)].filter(Boolean).join(" · ")||"—"}</span>
+              </div>);})()}
             {items.length===0&&!abs&&<div className="add-hint">+</div>}
           </div>);})}
       </React.Fragment>))}
     </div></div>
     {visibleEmployees.length===0&&<div className="empty"><div className="big">Kein Mitarbeiter gefunden</div></div>}
     {modal&&<AssignModal store={store} ctx={modal} onClose={()=>setModal(null)}/>}
+    {dayPop&&<DayPopup store={store} ctx={dayPop}
+      onEdit={a=>{const c=dayPop;setDayPop(null);setModal({employeeId:c.employeeId,date:c.date,editing:a});}}
+      onAdd={()=>{const c=dayPop;setDayPop(null);setModal({employeeId:c.employeeId,date:c.date});}}
+      onClose={()=>setDayPop(null)}/>}
     {sendOpen&&<SendModal store={store} onClose={()=>setSendOpen(false)}/>}
   </div>);
 }
 
+function DayPopup({store,ctx,onEdit,onAdd,onClose}){
+  const{employees,projects,assignments,techAssignments,versicherungen,isAdmin,canTermFor}=store;
+  const emp=employees.find(e=>e.id===ctx.employeeId);
+  const home=emp&&emp.adresse?emp.adresse:"";
+  const items=assignments.filter(a=>a.employeeId===ctx.employeeId&&a.date===ctx.date);
+  const dayStops=collectDayStops(ctx.employeeId,ctx.date,assignments,techAssignments,projects);
+  const dayUrl=dayRouteUrl(dayStops,home);
+  const mayEdit=canTermFor?canTermFor(ctx.employeeId):true;
+  return(<Modal title={"Termine · "+fmtDE(ctx.date)+" · "+(emp?emp.name:"")} onClose={onClose}
+    footer={<><button className="btn" onClick={onClose}>Schließen</button><span className="spacer"></span>
+      {mayEdit&&<button className="btn primary" onClick={onAdd}><Ic d={ICONS.plus}/> Einsatz hinzufügen</button>}</>}>
+    {dayUrl&&<a className="btn green" style={{width:"100%",justifyContent:"center",marginBottom:12}} href={dayUrl} target="_blank" rel="noopener">
+      🧭 Tagesroute starten{home?" (ab Wohnort)":""} · {dayStops.length} Stopp{dayStops.length>1?"s":""}</a>}
+    {dayUrl&&!home&&<div className="mini muted" style={{marginTop:-6,marginBottom:12}}>Ohne hinterlegten Wohnort startet die Route beim ersten Termin. Wohnort unter „Mitarbeiter" ergänzen – in Google Maps lässt sich der Start jederzeit ändern.</div>}
+    {items.length===0&&<div className="muted mini" style={{marginBottom:10}}>Keine Termine an diesem Tag.</div>}
+    {items.map(a=>{const hidden=isPrivateHidden(a,isAdmin);const ps=hidden?[]:assignmentProjects(a,projects);
+      const label=hidden?"Geblockt":(a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>projLabel(p)).join(", ")||"Projekt"));
+      const col=hidden?"#94a3b8":chipColor(a,projects,versicherungen);
+      const addrs=hidden?[]:assignmentAddresses(a,projects);const rUrl=addrs.length?dayRouteUrl(addrs,home):null;
+      const meta=[hidden?"":(a.projektrolle||(a.type==="frei"?"Freier Termin":a.einsatz)),
+        a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig",
+        a.ort==="ausland"?"Ausland":""].filter(Boolean).join(" · ");
+      return(<div key={a.id} className="rec-row" style={{borderLeft:"4px solid "+col,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 160px",minWidth:0}}>
+          <div style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{hidden&&<span title="privat">🔒 </span>}{label}</div>
+          <div className="mini muted">{meta}</div></div>
+        <button className="btn sm" onClick={()=>onEdit(a)}><Ic d={ICONS.edit}/> {mayEdit?"Bearbeiten":"Ansehen"}</button>
+        {rUrl&&<a className="btn sm" href={rUrl} target="_blank" rel="noopener"><Ic d={ICONS.pin}/> Route starten</a>}
+      </div>);})}
+  </Modal>);
+}
 function AssignModal({store,ctx,onClose}){
   const{projects,employees,einsatz,absences,api,appUrl,canTermFor}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
@@ -1221,7 +1258,7 @@ function SendModal({store,onClose}){
         t+=`\n  • ${lbl}${a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":"")}${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}${a.ort==="ausland"?" [Ausland]":""}`;
         const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
         adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});
-      const stops=collectDayStops(e.id,d,assignments,techAssignments,projects);const url=dayRouteUrl(stops);
+      const stops=collectDayStops(e.id,d,assignments,techAssignments,projects);const url=dayRouteUrl(stops,e.adresse);
       if(url)t+=`\n    🧭 Tagesroute: ${url}`;});
     if(appUrl)t+=`\n\nBei Änderungen bitte aktiv in den Plan schauen: ${appUrl}`;
     return t;}
