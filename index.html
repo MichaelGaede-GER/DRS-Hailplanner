@@ -1449,8 +1449,8 @@ function TechModal({store,ctx,onClose}){
     const conflicts=dates.filter(d=>absenceOn(absences,ctx.employeeId,d));
     if(conflicts.length){const a=absenceOn(absences,ctx.employeeId,conflicts[0]);
       if(!confirm(emp?.name+" ist im gewählten Zeitraum abwesend ("+a.art+", "+conflicts.length+" Tag(e) betroffen). Trotzdem einplanen?"))return;}
-    if(ed){const ok=await api.updateTech({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy,sendLog:ed.sendLog});if(!ok)return;
-      const extra=datesBetween(lo,hi).filter(d=>d!==ctx.date);
+    if(ed){const ok=await api.updateTech({...base,id:ed.id,date:lo,createdBy:ed.createdBy,sendLog:ed.sendLog});if(!ok)return;
+      const extra=datesBetween(lo,hi).filter(d=>d!==lo);
       if(extra.length)await api.addTech(extra.map(d=>({...base,date:d})));onClose();}
     else{const dates=datesBetween(lo,hi);if(await api.addTech(dates.map(d=>({...base,date:d}))))onClose();}
   }
@@ -1478,9 +1478,9 @@ function TechModal({store,ctx,onClose}){
       <div className="field"><label>Versicherung</label>
         <select value={versicherung} onChange={e=>setVersicherung(e.target.value)}>
           <option value="">— keine —</option>{usedVers.map(v=><option key={v.name}>{v.name}</option>)}</select></div></div>
-    {!ed&&<div className="row2"><div className="field"><label>Von</label>
+    <div className="row2"><div className="field"><label>Von (Datum){ed?" – verschiebt den Termin":""}</label>
         <input type="date" value={fromDate} onChange={e=>{setFromDate(e.target.value);if(e.target.value>toDate)setToDate(e.target.value);}}/></div>
-      <div className="field"><label>Bis (z. B. Mo–Mi)</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>}
+      <div className="field"><label>Bis (optional, mehrere Tage – z. B. Mo–Mi)</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>
     <div className="row2">
       <div className="field"><label>Zeit</label>
         <div className="pill-tabs" style={{marginBottom:allDay?0:8}}>
