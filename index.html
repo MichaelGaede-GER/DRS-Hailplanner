@@ -269,6 +269,7 @@ create table if not exists tech_assignments (
 create table if not exists app_users (
   email text primary key, name text default '', rolle text default 'Betrachter',
   permissions jsonb default '{}'::jsonb, employee_id uuid, active boolean default true,
+  visible_woche jsonb, visible_tech jsonb,
   created_at timestamptz default now());
 create table if not exists login_log (
   id uuid primary key default gen_random_uuid(),
@@ -312,6 +313,8 @@ alter table projects    add column if not exists kontakt_mail text default '';
 alter table assignments add column if not exists project_nrs jsonb default '[]'::jsonb;
 alter table assignments add column if not exists notes jsonb default '[]'::jsonb;
 alter table tech_assignments add column if not exists notes jsonb default '[]'::jsonb;
+alter table app_users add column if not exists visible_woche jsonb;
+alter table app_users add column if not exists visible_tech jsonb;
 alter table assignments add column if not exists all_day boolean default true;
 alter table assignments add column if not exists start_time text;
 alter table assignments add column if not exists end_time text;
@@ -358,6 +361,7 @@ exception when duplicate_object then null; end $$;
 create table if not exists app_users (
   email text primary key, name text default '', rolle text default 'Betrachter',
   permissions jsonb default '{}'::jsonb, employee_id uuid, active boolean default true,
+  visible_woche jsonb, visible_tech jsonb,
   created_at timestamptz default now());
 create table if not exists login_log (
   id uuid primary key default gen_random_uuid(),
@@ -380,9 +384,9 @@ const DEFAULT_TYPEN=["Versicherungen","Autohaus Kunden","Hagelcover","Autohaus",
 const DEFAULT_VERS=[{name:"VVD",color:"#2563eb"},{name:"AIOI",color:"#059669"},{name:"Nürnberger",color:"#d97706"},
   {name:"Münchner",color:"#db2777"},{name:"R+V",color:"#7c3aed"},{name:"HUK",color:"#0d9488"}];
 const DEFAULT_WORKDAYS=[0,1,2,3,4,5]; // 0=Mo … 6=So  → Mo–Sa
-const PDF_FIELDS=[["kunde","Kunde / Projekt"],["zeit","Uhrzeit (ganztägig / Zeit)"],["adresse","Kundenadresse"],
+const PDF_FIELDS=[["kunde","Kunde / Projekt"],["projektnr","Projektnummer"],["zeit","Uhrzeit (ganztägig / Zeit)"],["adresse","Kundenadresse"],
   ["versicherung","Versicherung"],["einsatzstatus","Einsatzstatus / Tätigkeit"],["hinweis","Bemerkung"]];
-const DEFAULT_PDF_FIELDS={kunde:true,zeit:true,adresse:true,versicherung:true,einsatzstatus:true,hinweis:true};
+const DEFAULT_PDF_FIELDS={kunde:true,projektnr:true,zeit:true,adresse:true,versicherung:true,einsatzstatus:true,hinweis:true};
 function assignmentPdfLines(a,projects,F){
   F=F||DEFAULT_PDF_FIELDS;
   if(a.type==="frei"&&a.privat){const l=["Geblockt"];if(F.zeit!==false)l.push(a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig");return l;}
@@ -390,6 +394,7 @@ function assignmentPdfLines(a,projects,F){
   const lines=[];
   const label=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name||p.alias).join(", ")||"Projekt");
   if(F.kunde!==false)lines.push(label);
+  if(F.projektnr!==false&&a.type!=="frei"&&ps.length){const nrs=ps.map(p=>p.nr).filter(Boolean);if(nrs.length)lines.push("Nr. "+nrs.join(", "));}
   const meta=[];
   if(F.einsatzstatus!==false){const es=a.projektrolle||a.einsatz;if(es)meta.push(es);}
   if(F.zeit!==false)meta.push(a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")+" Uhr"):"ganztägig");
@@ -502,8 +507,10 @@ const techFromDb=r=>({id:r.id,employeeId:r.employee_id,projectNr:r.project_nr||"
   kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||""});
 const awSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
 const awDoneSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.awDone)||0),0);
-const userFromDb=r=>({email:r.email,name:r.name||"",rolle:r.rolle||"Betrachter",permissions:r.permissions||{},employeeId:r.employee_id||"",active:r.active!==false});
-const userToDb=u=>({email:(u.email||"").trim().toLowerCase(),name:u.name||"",rolle:u.rolle||"Betrachter",permissions:u.permissions||{},employee_id:u.employeeId||null,active:u.active!==false});
+const userFromDb=r=>({email:r.email,name:r.name||"",rolle:r.rolle||"Betrachter",permissions:r.permissions||{},employeeId:r.employee_id||"",active:r.active!==false,
+  visibleWoche:Array.isArray(r.visible_woche)?r.visible_woche:null,visibleTech:Array.isArray(r.visible_tech)?r.visible_tech:null});
+const userToDb=u=>({email:(u.email||"").trim().toLowerCase(),name:u.name||"",rolle:u.rolle||"Betrachter",permissions:u.permissions||{},employee_id:u.employeeId||null,active:u.active!==false,
+  visible_woche:(u.visibleWoche&&u.visibleWoche.length)?u.visibleWoche:null,visible_tech:(u.visibleTech&&u.visibleTech.length)?u.visibleTech:null});
 const absToDb=a=>({employee_id:a.employeeId,art:a.art||"Urlaub",von:a.von,bis:a.bis,note:a.note||"",created_by:a.createdBy||null});
 const absFromDb=r=>({id:r.id,employeeId:r.employee_id,art:r.art,von:r.von,bis:r.bis,note:r.note||"",createdBy:r.created_by});
 
@@ -642,7 +649,7 @@ function App({sb,session}){
   const[awCapacity,setAwCapacity]=useState(0);const[rolePlanung,setRolePlanung]=useState({});
   const[pdfFields,setPdfFields]=useState(DEFAULT_PDF_FIELDS);
   const[appUsers,setAppUsers]=useState([]);const[loginLog,setLoginLog]=useState([]);const[changeLog,setChangeLog]=useState([]);
-  const[rolePerm,setRolePerm]=useState({});
+  const[rolePerm,setRolePerm]=useState({});const[customPermRoles,setCustomPermRoles]=useState([]);
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
@@ -667,6 +674,7 @@ function App({sb,session}){
       setAwCapacity(Number(sm.aw_capacity)||0);
       setPdfFields(sm.pdf_fields&&typeof sm.pdf_fields==="object"&&!Array.isArray(sm.pdf_fields)?{...DEFAULT_PDF_FIELDS,...sm.pdf_fields}:DEFAULT_PDF_FIELDS);
       setRolePlanung(sm.role_planung&&typeof sm.role_planung==="object"&&!Array.isArray(sm.role_planung)?sm.role_planung:{});
+      setCustomPermRoles(Array.isArray(sm.custom_perm_roles)?sm.custom_perm_roles:[]);
       setRolePerm(sm.role_permissions&&typeof sm.role_permissions==="object"&&!Array.isArray(sm.role_permissions)?sm.role_permissions:{});
       const au=await sb.from("app_users").select("*");
       if(au.error){if(/relation|does not exist|schema cache|could not find/i.test(au.error.message||""))setSchemaWarn(true);setAppUsers([]);}
@@ -739,7 +747,7 @@ function App({sb,session}){
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);showToast(src.length+" Einsätze in Folgewoche kopiert");return true;},
     async setSetting(key,value){
-      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung,role_permissions:setRolePerm,pdf_fields:setPdfFields}[key];if(setter)setter(value);
+      const setter={roles:setRoles,einsatz:setEinsatz,typen:setTypen,app_url:setAppUrl,workdays:setWorkdays,versicherungen:setVersicherungen,aw_capacity:setAwCapacity,role_planung:setRolePlanung,role_permissions:setRolePerm,pdf_fields:setPdfFields,custom_perm_roles:setCustomPermRoles}[key];if(setter)setter(value);
       const{error}=await sb.from("settings").upsert({key,value},{onConflict:"key"});if(error)return fail(error);return true;},
     logChange,
     async saveUser(rec,isNew){
@@ -789,7 +797,7 @@ function App({sb,session}){
   const myEmployeeId=(currentUser&&currentUser.employeeId)||((employees.find(e=>(e.email||"").toLowerCase()===(myEmail||"").toLowerCase())||{}).id)||"";
   const canTermFor=empId=>(empId&&myEmployeeId&&empId===myEmployeeId)?can("term_own"):can("term_others");
   const isAdmin=isBootstrap||["Super-Admin","Admin"].includes(currentUser&&currentUser.rolle);
-  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,appUsers,loginLog,changeLog,rolePerm,currentUser,isBootstrap,isAdmin,perm,can,myEmployeeId,canTermFor,api,showToast,session,myEmail,reload,schemaWarn};
+  const store={employees,projects,assignments,techAssignments,absences,roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,appUsers,loginLog,changeLog,rolePerm,customPermRoles,currentUser,isBootstrap,isAdmin,perm,can,myEmployeeId,canTermFor,api,showToast,session,myEmail,reload,schemaWarn};
 
   const NAV=[["dash","Dashboard",ICONS.dash,true],["week","Wochenplanung",ICONS.week,can("term_view")],
     ["tech","Technikerplanung",ICONS.tech,can("term_view")],["proj","Projekte",ICONS.proj,can("proj_view")],
@@ -958,7 +966,7 @@ function buildMessage(emp,a,projects,appUrl){
     if(a.adresse)body+="\nAdresse: "+mapsLink(a.adresse);}
   else{
     const ps=assignmentProjects(a,projects);
-    const names=ps.map(p=>p.name).join(", ")||"Projekt";
+    const names=ps.map(p=>p.name+(p.nr?" (Nr. "+p.nr+")":"")).join(", ")||"Projekt";
     body=`Hallo ${vn}, du bist am ${when} eingeplant.\nProjekt(e): ${names}\nTätigkeit: ${a.einsatz||"-"}${a.projektrolle?" / "+a.projektrolle:""}${a.ort==="ausland"?" (Ausland)":""}`;
     const withAddr=ps.filter(p=>p.adresse);
     if(withAddr.length)body+="\n"+withAddr.map(p=>"Adresse "+(p.alias||p.name)+": "+mapsLink(p.adresse)).join("\n");
@@ -1044,7 +1052,7 @@ function Dashboard({store,go}){
 
 /* ============ WOCHENPLANUNG ============ */
 function Wochenplanung({store}){
-  const{employees,projects,assignments,techAssignments,absences,api,appUrl,workdays,versicherungen,rolePlanung,pdfFields,isAdmin}=store;
+  const{employees,projects,assignments,techAssignments,absences,api,appUrl,workdays,versicherungen,rolePlanung,pdfFields,isAdmin,currentUser}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
@@ -1063,7 +1071,8 @@ function Wochenplanung({store}){
     return true;
   }
   const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a));
-  const visibleEmployees=employees.filter(e=>showsInWeek(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
+  const visWoche=currentUser?.visibleWoche;
+  const visibleEmployees=employees.filter(e=>showsInWeek(e,rolePlanung)&&(!visWoche||!visWoche.length||visWoche.includes(e.id))&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveAssignment(dragId,empId,date);setDragId(null);setDropCell(null);}
   function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days,pdfFields);}
   const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
@@ -1292,7 +1301,7 @@ function AssignModal({store,ctx,onClose}){
       {selProjObjs.length>0&&<div className="notify-box" style={{marginBottom:14}}>
         <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Projektdaten</div>
         {selProjObjs.map(p=>{const st=effectiveStandort(p);return(<div key={p.nr} className="mini" style={{marginBottom:4}}>
-          <b>{p.name}</b>{p.versicherung?<span className="badge b-gray" style={{marginLeft:6}}>{p.versicherung}</span>:null}
+          <b>{p.name}</b><span className="mini muted" style={{marginLeft:6}}>Nr. {p.nr}</span>{p.versicherung?<span className="badge b-gray" style={{marginLeft:6}}>{p.versicherung}</span>:null}
           <span className={"badge "+(st==="ausland"?"b-teal":"b-gray")} style={{marginLeft:6}}>{st==="ausland"?"Ausland":"Inland"}</span>
           {p.remote?<span className="badge b-violet" style={{marginLeft:6}}>Remote</span>:null}
           {(p.fahrzeugarten||[]).map(fa=><span key={fa} className="badge b-gray" style={{marginLeft:4}}>{fa}</span>)}
@@ -1344,7 +1353,7 @@ function AssignModal({store,ctx,onClose}){
       <button className="btn sm" onClick={()=>{const ps=assignmentProjects({projectNrs:selProjects},projects);
         downloadICS({title:(mode==="frei"?(title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Einsatz")),date:ctx.date,allDay,startTime,endTime,
           location:(mode==="frei"?freeAddr:(ps.map(p=>p.adresse).filter(Boolean)[0]||"")),
-          description:[mode==="project"?("Einsatz "+(projektrolle||eins||"")):"",deriveNoteText(notes)].filter(Boolean).join("\n"),
+          description:[mode==="project"?("Einsatz "+(projektrolle||eins||"")):"",mode==="project"&&ps.length?("Projekt-Nr.: "+ps.map(p=>p.nr).join(", ")):"",deriveNoteText(notes)].filter(Boolean).join("\n"),
           contactName:kontaktName,contactTel:kontaktTel,contactMail:kontaktMail});}}>
         <Ic d={ICONS.week}/> Termin herunterladen (.ics)</button>
       <div className="mini muted" style={{marginTop:7}}>Öffnet sich in Outlook, Apple Kalender oder Google Kalender.</div></div>}
@@ -1390,7 +1399,7 @@ function SendModal({store,onClose}){
       dayItems.forEach(a=>{
         if(a.type==="frei"&&a.privat){t+=`\n  • Geblockt${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}`;return;}
         const ps=assignmentProjects(a,projects);
-        const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name).join(", ")||"Projekt");
+        const lbl=a.type==="frei"?(a.title||"Freier Termin"):(ps.map(p=>p.name+(p.nr?" (Nr. "+p.nr+")":"")).join(", ")||"Projekt");
         t+=`\n  • ${lbl}${a.projektrolle?" – "+a.projektrolle:(a.einsatz?" ("+a.einsatz+")":"")}${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}${a.ort==="ausland"?" [Ausland]":""}`;
         const adrs=[...ps.filter(p=>p.adresse).map(p=>p.adresse),a.adresse].filter(Boolean);
         adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});
@@ -1425,6 +1434,7 @@ function buildTechMessage(emp,t,project,appUrl){
   let b="Einsatzplanung\n";
   b+="Techniker: "+name+"\n";
   b+="Projekt/Autohaus: "+(t.autohaus||project?.name||"-")+"\n";
+  if(t.projectNr||project?.nr)b+="Projekt-Nr.: "+(t.projectNr||project?.nr)+"\n";
   b+="Datum: "+when+"\n";
   if(t.dauer)b+="Einsatzdauer: "+t.dauer+"\n";
   if(t.adresse)b+="Adresse:\n"+t.adresse+"\n";
@@ -1438,7 +1448,7 @@ function buildTechMessage(emp,t,project,appUrl){
   return b;
 }
 function Technikerplanung({store}){
-  const{employees,projects,techAssignments,absences,api,workdays,versicherungen,awCapacity,rolePlanung}=store;
+  const{employees,projects,techAssignments,absences,api,workdays,versicherungen,awCapacity,rolePlanung,currentUser}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
   const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
@@ -1452,7 +1462,8 @@ function Technikerplanung({store}){
     if(versFilter&&t.versicherung!==versFilter)return false;
     return true;}
   const cellItems=(empId,date)=>techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t));
-  const visibleEmployees=employees.filter(e=>showsInTech(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
+  const visTech=currentUser?.visibleTech;
+  const visibleEmployees=employees.filter(e=>showsInTech(e,rolePlanung)&&(!visTech||!visTech.length||visTech.includes(e.id))&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveTech(dragId,empId,date);setDragId(null);setDropCell(null);}
   const usedVers=versicherungen.filter(v=>v.active!==false);
   const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
@@ -1683,7 +1694,7 @@ function TechModal({store,ctx,onClose}){
     {ed&&<div className="notify-box" style={{marginBottom:14}}>
       <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>In Kalender speichern</div>
       <button className="btn sm" onClick={()=>downloadICS({title:"Technikereinsatz "+(autohaus||project?.name||""),date:ctx.date,allDay,startTime,endTime,
-        location:adresse,description:[versicherung?("Versicherung: "+versicherung):"",dauer?("Dauer: "+dauer):"",base.vehicles.length?(base.vehicles.length+" Fahrzeug(e), Σ "+fmtAW(totalAW)+" AW"):"",deriveNoteText(notes)].filter(Boolean).join("\n"),
+        location:adresse,description:[projectNr?("Projekt-Nr.: "+projectNr):"",versicherung?("Versicherung: "+versicherung):"",dauer?("Dauer: "+dauer):"",base.vehicles.length?(base.vehicles.length+" Fahrzeug(e), Σ "+fmtAW(totalAW)+" AW"):"",deriveNoteText(notes)].filter(Boolean).join("\n"),
         contactName:kontaktName,contactTel:kontaktTel,contactMail:kontaktMail})}>
         <Ic d={ICONS.week}/> Termin herunterladen (.ics)</button>
       <div className="mini muted" style={{marginTop:7}}>Öffnet sich in Outlook, Apple Kalender oder Google Kalender.</div></div>}
@@ -2124,14 +2135,17 @@ function EmpEdit({store,emp,onClose}){
 
 /* ============ NUTZERVERWALTUNG (Phase 5) ============ */
 function UserEdit({store,user,onClose}){
-  const{employees,rolePerm,api}=store;const isNew=!user.email0;
+  const{employees,rolePerm,customPermRoles,api}=store;const isNew=!user.email0;
+  const allRoles=[...ROLES_LIST,...(customPermRoles||[])];
   const[f,setF]=useState({email:user.email||"",name:user.name||"",rolle:user.rolle||"Betrachter",
-    employeeId:user.employeeId||"",active:user.active!==false,permissions:user.permissions||{}});
+    employeeId:user.employeeId||"",active:user.active!==false,permissions:user.permissions||{},
+    visibleWoche:user.visibleWoche||[],visibleTech:user.visibleTech||[]});
   const[adv,setAdv]=useState(false);
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
   const eff={...rolePreset(f.rolle,rolePerm),...(f.permissions||{})};
   function togglePerm(k){setF(o=>({...o,permissions:{...eff,[k]:!eff[k]}}));}
   function resetPerm(){setF(o=>({...o,permissions:{}}));}
+  function toggleVis(field,id){setF(o=>({...o,[field]:o[field].includes(id)?o[field].filter(x=>x!==id):[...o[field],id]}));}
   async function submit(){if(!f.email.trim()){store.showToast("E-Mail erforderlich");return;}
     if(await api.saveUser({...f,email:f.email.trim().toLowerCase()},isNew))onClose();}
   return(<Modal title={isNew?"Neuer Nutzer":"Nutzer bearbeiten"} onClose={onClose} wide
@@ -2140,7 +2154,7 @@ function UserEdit({store,user,onClose}){
       <div className="field"><label>E-Mail (Login)</label><input type="email" value={f.email} onChange={e=>set("email",e.target.value)} disabled={!isNew} placeholder="name@drs.de"/></div>
       <div className="field"><label>Name</label><input value={f.name} onChange={e=>set("name",e.target.value)}/></div></div>
     <div className="row2">
-      <div className="field"><label>Rolle</label><select value={f.rolle} onChange={e=>set("rolle",e.target.value)}>{ROLES_LIST.map(r=><option key={r}>{r}</option>)}</select></div>
+      <div className="field"><label>Rolle</label><select value={f.rolle} onChange={e=>set("rolle",e.target.value)}>{allRoles.map(r=><option key={r}>{r}</option>)}</select></div>
       <div className="field"><label>Verknüpfter Mitarbeiter (für „eigene Termine")</label>
         <select value={f.employeeId} onChange={e=>set("employeeId",e.target.value)}>
           <option value="">— keiner —</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div></div>
@@ -2151,10 +2165,23 @@ function UserEdit({store,user,onClose}){
           <span className="spacer"></span><button className="btn ghost sm" onClick={resetPerm}>Auf Rolle zurücksetzen</button></div>
         {PERM_DEFS.map(([k,l])=>(<label key={k} className="flex mini" style={{gap:8,cursor:"pointer",padding:"3px 0"}}>
           <input type="checkbox" style={{width:"auto"}} checked={!!eff[k]} onChange={()=>togglePerm(k)}/> {l}</label>))}</div>}</div>
+    <div className="notify-box" style={{marginTop:6}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Sichtbare Mitarbeiter · Wochenplanung</div>
+      <p className="mini muted" style={{marginTop:0,marginBottom:8}}>Leer = alle sichtbaren Mitarbeiter (Standard). Sonst nur die hier ausgewählten Kollegen.</p>
+      <div className="diffcol" style={{maxHeight:150,overflow:"auto"}}>{employees.map(e=>(
+        <label key={e.id} className="flex mini" style={{gap:8,cursor:"pointer",padding:"3px 6px"}}>
+          <input type="checkbox" style={{width:"auto"}} checked={f.visibleWoche.includes(e.id)} onChange={()=>toggleVis("visibleWoche",e.id)}/> {e.name}</label>))}</div></div>
+    <div className="notify-box" style={{marginTop:12}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Sichtbare Techniker · Technikerplanung</div>
+      <p className="mini muted" style={{marginTop:0,marginBottom:8}}>Leer = alle sichtbaren Techniker (Standard). Sonst nur die hier ausgewählten Kollegen.</p>
+      <div className="diffcol" style={{maxHeight:150,overflow:"auto"}}>{employees.map(e=>(
+        <label key={e.id} className="flex mini" style={{gap:8,cursor:"pointer",padding:"3px 6px"}}>
+          <input type="checkbox" style={{width:"auto"}} checked={f.visibleTech.includes(e.id)} onChange={()=>toggleVis("visibleTech",e.id)}/> {e.name}</label>))}</div></div>
   </Modal>);
 }
 function Nutzerverwaltung({store}){
-  const{appUsers,employees,rolePerm,api,isBootstrap,myEmail,currentUser}=store;
+  const{appUsers,employees,rolePerm,customPermRoles,api,isBootstrap,myEmail,currentUser}=store;
+  const allRoles=[...ROLES_LIST,...(customPermRoles||[])];
   const[edit,setEdit]=useState(null);const[view,setView]=useState("users");
   const empName=id=>{const e=employees.find(x=>x.id===id);return e?e.name:"";};
   function setMatrix(rolle,k,val){const cur=rolePreset(rolle,rolePerm);const next={...rolePerm,[rolle]:{...cur,[k]:val}};api.setRolePerm(next);}
@@ -2184,9 +2211,9 @@ function Nutzerverwaltung({store}){
       </tbody></table></div>
     </>:<>
       <p className="muted mini" style={{marginTop:0}}>Rechte je Rolle. Super-Admin hat immer alle Rechte. Einzelne Nutzer lassen sich zusätzlich individuell übersteuern (im Benutzer-Dialog).</p>
-      <div className="tbl-wrap"><table><thead><tr><th>Recht</th>{ROLES_LIST.map(r=><th key={r} style={{textAlign:"center"}}>{r}</th>)}</tr></thead><tbody>
+      <div className="tbl-wrap"><table><thead><tr><th>Recht</th>{allRoles.map(r=><th key={r} style={{textAlign:"center"}}>{r}</th>)}</tr></thead><tbody>
         {PERM_DEFS.map(([k,l])=>(<tr key={k}><td style={{fontWeight:600}}>{l}</td>
-          {ROLES_LIST.map(r=>{const val=!!rolePreset(r,rolePerm)[k];const locked=r==="Super-Admin";
+          {allRoles.map(r=>{const val=!!rolePreset(r,rolePerm)[k];const locked=r==="Super-Admin";
             return(<td key={r} style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={val} disabled={locked}
               onChange={e=>setMatrix(r,k,e.target.checked)}/></td>);})}</tr>))}
       </tbody></table></div>
@@ -2255,6 +2282,20 @@ function Statistik({store}){
 }
 
 /* ============ EINSTELLUNGEN ============ */
+function PermRolesEditor({customPermRoles,api,showToast}){
+  const list=customPermRoles||[];const[val,setVal]=useState("");
+  function add(){const v=val.trim();if(!v)return;
+    if(ROLES_LIST.some(r=>r.toLowerCase()===v.toLowerCase())||list.some(r=>r.toLowerCase()===v.toLowerCase())){showToast("Rolle existiert bereits");return;}
+    api.setSetting("custom_perm_roles",[...list,v]);setVal("");}
+  function remove(r){api.setSetting("custom_perm_roles",list.filter(x=>x!==r));}
+  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Nutzerrollen (Rechte-Rollen)</h3></div><div className="card-b">
+    <p className="muted mini" style={{marginTop:0}}>Die fünf Basis-Rollen <b>Super-Admin, Admin, Disponent, Mitarbeiter, Betrachter</b> sind fest und bestimmen zentrale Sicherheitsprüfungen (z. B. interne Bemerkungen). Zusätzlich kannst du hier eigene Rollen anlegen – deren Rechte legst du unter „Nutzer → Rechte je Rolle" fest (Standard: wie Betrachter).</p>
+    <div className="tag-list" style={{marginBottom:14}}>
+      {ROLES_LIST.map(r=>(<span key={r} className="tag" style={{opacity:.6}} title="Basis-Rolle, fest">{r}</span>))}
+      {list.map(r=>(<span key={r} className="tag">{r}<button onClick={()=>remove(r)} title="Entfernen">×</button></span>))}</div>
+    <div className="flex"><input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")add();}} placeholder="Neue Rolle, z. B. „Teamleiter"…" style={{maxWidth:320}}/>
+      <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Rolle hinzufügen</button></div></div></div>);
+}
 function ListEditor({title,desc,skey,items,api,showToast}){
   const[val,setVal]=useState("");
   function add(){const v=val.trim();if(!v)return;if(items.includes(v)){showToast("Existiert bereits");return;}api.setSetting(skey,[...items,v]);setVal("");}
@@ -2315,7 +2356,7 @@ function RolePlanungEditor({roles,employees,rolePlanung,api,showToast}){
   </div></div>);
 }
 function Einstellungen({store}){
-  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,api,showToast,employees,projects,assignments}=store;
+  const{roles,einsatz,typen,appUrl,workdays,versicherungen,awCapacity,rolePlanung,pdfFields,customPermRoles,api,showToast,employees,projects,assignments}=store;
   const[seeding,setSeeding]=useState(false);const[urlVal,setUrlVal]=useState(appUrl);const[copied,setCopied]=useState("");
   const[awVal,setAwVal]=useState(awCapacity||0);
   function exportData(){const data={employees,projects,assignments,roles,einsatz,typen,appUrl,workdays,versicherungen,exported:new Date().toISOString()};
@@ -2352,6 +2393,7 @@ function Einstellungen({store}){
           <input type="checkbox" style={{width:"auto"}} checked={on} onChange={e=>{api.setSetting("pdf_fields",{...pdfFields,[k]:e.target.checked});showToast("PDF-Einstellung gespeichert");}}/> {label}</label>);})}</div>
       <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Kundenadresse = die im Projekt hinterlegte Adresse (bzw. bei freien Terminen die dort eingegebene). Auslandseinsätze werden immer gekennzeichnet.</p></div></div>
 
+    <PermRolesEditor customPermRoles={customPermRoles} api={api} showToast={showToast}/>
     <ListEditor title="Rollen" desc="Rollen für Mitarbeiter – frei definierbar (z. B. Projektleiter, Projektassistenz, Techniker, Monteur)." skey="roles" items={roles} api={api} showToast={showToast}/>
     <RolePlanungEditor roles={roles} employees={employees} rolePlanung={rolePlanung} api={api} showToast={showToast}/>
     <ListEditor title="Einsatzstatus / Tätigkeiten" desc="Was ein Mitarbeiter im Projekt macht (z. B. Begutachtung, Projektleitung)." skey="einsatz" items={einsatz} api={api} showToast={showToast}/>
