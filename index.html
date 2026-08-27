@@ -212,7 +212,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.2";
+const APP_VERSION="v1.5.3";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -403,7 +403,7 @@ function assignmentPdfLines(a,projects,F){
   if(F.hinweis!==false&&a.note)lines.push("Hinweis: "+a.note);
   return lines;
 }
-const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker"];
+const PROJEKTROLLEN=["Erstgespräch","Besichtigung","Projektleiter","Techniker","Monteur"];
 const FAHRZEUGARTEN=[["PK","Privatkunden"],["GW","Gebrauchtwagen"],["NW","Neuwagen"]];
 const PERM_DEFS=[
   ["proj_view","Projekte ansehen"],["proj_create","Projekte erstellen"],["proj_edit","Projekte bearbeiten"],["proj_delete","Projekte löschen"],
@@ -425,7 +425,7 @@ function effectivePerms(user,roleSettings){if(!user)return permObj([]);
   const base=rolePreset(user.rolle,roleSettings);return {...base,...(user.permissions||{})};}
 function detectStandort(adresse){return "inland";} // Standard immer Inland; Ausland wird manuell gesetzt
 function effectiveStandort(p){if(!p)return"inland";return(!p.standort||p.standort==="auto")?"inland":p.standort;}
-const ROLLE_KUERZEL={"Erstgespräch":"E","Besichtigung":"B","Projektleiter":"P","Techniker":"T"};
+const ROLLE_KUERZEL={"Erstgespräch":"E","Besichtigung":"B","Projektleiter":"P","Techniker":"T","Monteur":"M"};
 const ABSENCE_ARTEN=["Urlaub","Krank","Frei","Schulung","Gesperrt für Einsatz","Nicht verfügbar","Sonstige"];
 const ABSENCE_COLORS={"Urlaub":"#0d9488","Krank":"#dc2626","Frei":"#64748b","Schulung":"#7c3aed",
   "Gesperrt für Einsatz":"#dc2626","Nicht verfügbar":"#94a3b8","Sonstige":"#d97706"};
@@ -1897,7 +1897,7 @@ function Projekte({store}){
       {mayCreate&&<button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neues Projekt</button>}
     </div>
     <div className="tbl-wrap"><table><thead><tr>
-      <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Versich.</th><th>Planung (E·B·P·T)</th>
+      <th>Nr</th><th>Projektname</th><th>Alias</th><th>Typ</th><th>Versich.</th><th>Planung (E·B·P·T·M)</th>
       <th>Eingeplant</th><th style={{width:110}}>Fortschritt</th><th>Status</th><th></th></tr></thead><tbody>
       {filtered.map(p=>{const vc=versColor(p.versicherung);const stand=effectiveStandort(p);const planned=plannedFor(p);
         return(<tr key={p.nr} className={mayEdit?"clickrow":""} onClick={mayEdit?(()=>setEdit(p)):undefined} title={mayEdit?"Zum Bearbeiten klicken":""}>
@@ -1999,18 +1999,20 @@ function ProjectEdit({store,proj,onClose}){
       <div className="field"><label>Fortschritt: {f.fortschritt}%</label><input type="range" min="0" max="100" value={f.fortschritt} onChange={e=>set("fortschritt",e.target.value)}/></div></div>
 
     <div className="field"><label>Planungsstatus / Rollen</label>
-      <div className="mini muted" style={{marginBottom:8}}>Aus der Terminplanung übernommene Rollen (letzter Eintrag zählt) erscheinen automatisch. Zusätzlich kannst du manuell einen Haken setzen bzw. einen Namen eintragen.</div>
+      <div className="mini muted" style={{marginBottom:8}}>Aus der Terminplanung übernommene Rollen (letzter Eintrag zählt) erscheinen automatisch. Zusätzlich kannst du je Rolle einen <b>erfassten Mitarbeiter auswählen</b> oder einen <b>freien Namen</b> eintragen (auch Personen, die nicht als Mitarbeiter angelegt sind).</div>
+      <datalist id="proj-role-emps">{employees.map(e=><option key={e.id} value={e.name}/>)}</datalist>
       {PROJEKTROLLEN.map(r=>{const d=derived[r];const man=rollen[r]||{};const fromTermin=d&&d.source==="termin";
         return(<div key={r} style={{border:"1px solid var(--line)",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
           <div className="flex" style={{gap:8}}>
-            <span style={{width:22,height:22,borderRadius:6,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:d?"var(--green)":"#e2e8f0",color:d?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>
+            <span style={{width:22,height:22,borderRadius:6,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,background:(d||man.name||man.checked)?"var(--green)":"#e2e8f0",color:(d||man.name||man.checked)?"#fff":"#94a3b8"}}>{ROLLE_KUERZEL[r]}</span>
             <b style={{minWidth:110}}>{r}</b>
             {fromTermin?<span className="mini"><span className="badge b-green">{shortName(d.name)}</span> <span className="muted">aktuell · {fmtDE(d.date)} · aus Termin</span></span>:
               <label className="flex mini" style={{gap:6,cursor:"pointer"}}><input type="checkbox" style={{width:"auto"}} checked={!!man.checked} onChange={e=>setRolle(r,{checked:e.target.checked})}/> geplant</label>}
             <span className="spacer"></span>
             {fromTermin&&d.history.length>0&&<button type="button" className="btn ghost sm" onClick={()=>setHistOpen(h=>h===r?"":r)}>Historie ({d.history.length})</button>}
           </div>
-          {!fromTermin&&<input style={{marginTop:6}} placeholder="Name manuell (optional)" value={man.name||""} onChange={e=>setRolle(r,{name:e.target.value})}/>}
+          {!fromTermin&&<input list="proj-role-emps" style={{marginTop:6}} placeholder="Mitarbeiter auswählen oder Namen eintippen…" value={man.name||""} onChange={e=>setRolle(r,{name:e.target.value})}/>}
+          {fromTermin&&<div className="mini muted" style={{marginTop:6}}>Kommt aus einem Termin. Um hier manuell zu überschreiben, entferne die Terminrolle oder trage den Namen im Termin ein.</div>}
           {histOpen===r&&fromTermin&&<div className="diffcol" style={{marginTop:6}}>
             {d.history.map((h,i)=>(<div key={i} className="mini flex" style={{justifyContent:"space-between",padding:"2px 0"}}>
               <span>{fmtDE(h.date)}</span><span style={{fontWeight:600}}>{h.name}</span></div>))}</div>}
