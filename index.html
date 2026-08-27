@@ -155,6 +155,7 @@ textarea{resize:vertical;min-height:60px}
 .ver-badge{font-size:10px;font-weight:600;color:#cbd5e1;background:rgba(148,163,184,.18);border:1px solid rgba(148,163,184,.3);padding:1px 7px;border-radius:999px;white-space:nowrap;letter-spacing:.3px}
 .btn.nav-wk{border-color:var(--brand);color:var(--brand-d,#1d4ed8);font-weight:600;background:var(--brand-l,#eff6ff)}
 .btn.nav-wk:hover{background:var(--brand);color:#fff}
+.ro-val{padding:8px 10px;background:var(--panel2,#f8fafc);border:1px solid var(--line);border-radius:8px;font-size:13px;min-height:18px}
 .auth-card{background:#fff;border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:440px;padding:32px}
 .auth-card.wide{max-width:720px}
 .auth-card h1{font-size:21px;margin:0 0 4px}
@@ -214,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.5";
+const APP_VERSION="v1.5.6";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -1721,6 +1722,7 @@ function TechModal({store,ctx,onClose}){
   const hasPhone=!!(emp?.phone||"").replace(/[^0-9]/g,"");
   function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
   const mayEdit=store.can("tech_edit");
+  const ro=!mayEdit;
 
   return(<Modal title={(ed?(mayEdit?"Technikertermin bearbeiten":"Technikertermin ansehen"):"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
     footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
@@ -1739,6 +1741,32 @@ function TechModal({store,ctx,onClose}){
         <div className="field"><label>Bis</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>
       <div className="field"><label>Bemerkung (optional)</label>
         <textarea value={absNote} onChange={e=>setAbsNote(e.target.value)} placeholder="Zusätzliche Info…"/></div>
+    </>:(ro?<>
+      <div className="notify-box" style={{marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15}}>{pickedProject?((pickedProject.alias?pickedProject.alias+" · ":"")+pickedProject.name):(autohaus||"Technikereinsatz")}</div>
+        {pickedProject&&<div className="mini muted">Projekt-Nr. {pickedProject.nr}</div>}</div>
+      <div className="row2">
+        <div className="field"><label>Autohaus</label><div className="ro-val">{autohaus||"—"}</div></div>
+        <div className="field"><label>Datum / Zeit</label><div className="ro-val">{fmtDE(ctx.date)} · {allDay?"ganztägig":((startTime||"")+(endTime?"–"+endTime:"")+" Uhr")}</div></div></div>
+      <div className="field"><label>Adresse</label><div className="ro-val">{adresse||"—"}</div>
+        {adresse.trim()&&<a href={mapsLink(adresse)} target="_blank" rel="noopener" className="btn ghost sm" style={{marginTop:6}}><Ic d={ICONS.pin}/> Route öffnen</a>}</div>
+      {dauer&&<div className="field"><label>Einsatzdauer</label><div className="ro-val">{dauer}</div></div>}
+      <div className="field"><label>Fahrzeuge · Σ {fmtAW(totalAW)} AW</label>
+        {vehicles.filter(v=>v.kennzeichen||v.vin).length===0?<div className="ro-val">—</div>:
+          vehicles.filter(v=>v.kennzeichen||v.vin).map((v,i)=>(<div key={i} className="rec-row"><span style={{fontWeight:600}}>{v.kennzeichen||"—"}</span>{v.vin&&<span className="mini muted">{v.vin}</span>}<span className="spacer"></span>{v.aw!==""&&v.aw!=null&&<span className="badge b-gray">{fmtAW(Number(v.aw))} AW</span>}</div>))}</div>
+      {deriveNoteText(notes)&&<div className="field"><label>Bemerkungen</label><div className="ro-val" style={{whiteSpace:"pre-wrap"}}>{deriveNoteText(notes)}</div></div>}
+      {(kontaktName||kontaktTel||kontaktMail)&&<div className="notify-box" style={{marginBottom:14}}>
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Ansprechpartner vor Ort</div>
+        <div className="ro-val">{kontaktName||"—"}</div>
+        <div className="flex wrap" style={{gap:8,marginTop:6}}>
+          {kontaktTel.trim()&&<a className="btn ghost sm" href={"tel:"+kontaktTel.replace(/[^0-9+]/g,"")}>📞 {kontaktTel}</a>}
+          {kontaktMail.trim()&&<a className="btn ghost sm" href={"mailto:"+kontaktMail.trim()}>✉️ {kontaktMail}</a>}</div></div>}
+      <div className="notify-box">
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>In Kalender speichern</div>
+        <button className="btn sm" onClick={()=>downloadICS({title:"Technikereinsatz "+(autohaus||project?.name||""),date:ctx.date,allDay,startTime,endTime,
+          location:adresse,description:[dauer?("Dauer: "+dauer):"",vehicles.filter(v=>v.kennzeichen||v.vin).length+" Fahrzeug(e)",deriveNoteText(notes)].filter(Boolean).join("\n"),
+          contactName:kontaktName,contactTel:kontaktTel,contactMail:kontaktMail})}><Ic d={ICONS.week}/> Termin herunterladen (.ics)</button>
+        <div className="mini muted" style={{marginTop:7}}>Öffnet sich in Outlook, Apple Kalender oder Google Kalender.</div></div>
     </>:<>
     <div className="row2">
       <div className="field"><label>Projekt suchen</label>
@@ -1820,7 +1848,7 @@ function TechModal({store,ctx,onClose}){
         {ed.sendLog.slice().reverse().map((s,i)=>(<div key={i} className="mini muted">{fmtDE(s.ts.slice(0,10))} – {s.ts.slice(11,16)} Uhr · {s.channel} versendet{s.by?" ("+shortCreator(s.by)+")":""}</div>))}
       </div>}
     </div>
-    </>}
+    </>)}
   </Modal>);
 }
 
