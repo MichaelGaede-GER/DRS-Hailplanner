@@ -512,6 +512,7 @@ const Ic=({d,...p})=>(<svg className="ic" viewBox="0 0 24 24" fill="none" stroke
   strokeLinecap="round" strokeLinejoin="round" {...p}><path d={d}/></svg>);
 const ICONS={
   dash:"M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z",
+  link:"M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.71-1.71",
   week:"M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
   proj:"M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z",
   emp:"M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
@@ -629,6 +630,31 @@ function Login({sb}){
 }
 
 /* ============ APP ============ */
+function MitarbeiterView({store,empId,emp,sb,canExit}){
+  const{rolePlanung}=store;
+  if(!emp)return(<div className="center-screen"><div className="auth-card">
+    <h2 style={{marginTop:0}}>Plan nicht gefunden</h2>
+    <p className="muted">Dieser persönliche Link ist ungültig oder der Mitarbeiter wurde entfernt.</p>
+    <a className="btn primary" href={location.origin+location.pathname}>Zur Startseite</a></div></div>);
+  const week=showsInWeek(emp,rolePlanung),tech=showsInTech(emp,rolePlanung);
+  const showWeek=week||(!week&&!tech);
+  const first=(emp.name||"").includes(",")?emp.name.split(",")[1].trim():emp.name;
+  return(<div>
+    <div className="topnav">
+      <div className="brand">Mein Plan <small>{emp.name}</small></div>
+      <span className="spacer"></span>
+      <div className="tnav-user">
+        {canExit&&<a className="btn sm" href={location.origin+location.pathname}>Volle Ansicht</a>}
+        <button className="btn sm" onClick={()=>sb.auth.signOut()}><Ic d={ICONS.logout}/> Abmelden</button></div>
+    </div>
+    <div className="page wide">
+      <h2 className="ttl">Hallo {first} 👋</h2>
+      <div className="sub">Dein persönlicher Einsatzplan – tippe auf einen Tag für Details, Route und Kalender-Export. Neue Termine legst du per Tipp auf einen leeren Tag an.</div>
+      {showWeek&&<Wochenplanung store={store} soloEmp={empId}/>}
+      {tech&&<div style={{marginTop:26}}><Technikerplanung store={store} soloEmp={empId}/></div>}
+    </div>
+  </div>);
+}
 function App({sb,session}){
   const[tab,setTab]=useState("dash");
   const[loading,setLoading]=useState(true);const[loadErr,setLoadErr]=useState("");
@@ -798,6 +824,10 @@ function App({sb,session}){
     ["set","Einstellungen",ICONS.set,can("vers_edit")]].filter(x=>x[3]);
   const allowedTabs=NAV.map(x=>x[0]);
   const activeTab=allowedTabs.includes(tab)?tab:"dash";
+  const soloEmpId=new URLSearchParams(window.location.search).get("ma")||"";
+  if(soloEmpId&&!loading&&!loadErr){
+    return(<><MitarbeiterView store={store} empId={soloEmpId} emp={employees.find(e=>e.id===soloEmpId)} sb={sb} canExit={can("term_others")||isBootstrap}/>{toast}</>);
+  }
 
   return(<div>
     <div className="topnav">
@@ -840,6 +870,12 @@ function projLabel(p){return p?(p.alias||p.name):"";}
 function timeLabel(a){return a.allDay===false&&a.startTime?(a.startTime+(a.endTime?"–"+a.endTime:"")):"";}
 function shortCreator(email){if(!email)return"";return email.split("@")[0];}
 function assignmentProjects(a,projects){return(a.projectNrs||[]).map(nr=>projects.find(p=>p.nr===nr)).filter(Boolean);}
+function timeKey(a){return(a&&a.allDay===false&&a.startTime)?a.startTime:"99:99";}
+function sortByTime(list){return[...(list||[])].sort((x,y)=>timeKey(x).localeCompare(timeKey(y)));}
+function personalLink(empId,appUrl){
+  let base=(appUrl&&String(appUrl).trim())?String(appUrl).trim():(location.origin+location.pathname);
+  base=base.split("#")[0];const sep=base.includes("?")?"&":"?";
+  return base+sep+"ma="+encodeURIComponent(empId);}
 function isPrivateHidden(a,isAdmin){return a&&a.type==="frei"&&a.privat&&!isAdmin;}
 function collectDayStops(empId,date,assignments,techAssignments,projects){
   const items=[];
@@ -981,7 +1017,7 @@ function Dashboard({store,go}){
   const active=projects.filter(isActiveProject);
   const empById=id=>employees.find(e=>e.id===id);
   const auslandWk=weekAssign.filter(a=>a.ort==="ausland").length;
-  const byDay=weekDates.map(d=>({date:d,items:weekAssign.filter(a=>a.date===d)}));
+  const byDay=weekDates.map(d=>({date:d,items:sortByTime(weekAssign.filter(a=>a.date===d))}));
   // KW-Streifen: aktuelle Woche ± Umgebung, anklickbar
   const refMon=mondayOfWeek(isoYear(now),isoWeek(now));
   const strip=[];for(let k=-5;k<=10;k++){const dd=new Date(refMon.getFullYear(),refMon.getMonth(),refMon.getDate()+k*7);strip.push({wk:isoWeek(dd),yr:isoYear(dd),d0:new Date(dd),d6:new Date(dd.getFullYear(),dd.getMonth(),dd.getDate()+6),cur:k===0});}
@@ -1043,7 +1079,7 @@ function Dashboard({store,go}){
 }
 
 /* ============ WOCHENPLANUNG ============ */
-function Wochenplanung({store}){
+function Wochenplanung({store,soloEmp}){
   const{employees,projects,assignments,techAssignments,absences,api,appUrl,workdays,versicherungen,rolePlanung,pdfFields,isAdmin}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
@@ -1062,8 +1098,8 @@ function Wochenplanung({store}){
     if(versFilter){const ps=assignmentProjects(a,projects);if(!ps.some(p=>p.versicherung===versFilter))return false;}
     return true;
   }
-  const cellItems=(empId,date)=>assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a));
-  const visibleEmployees=employees.filter(e=>showsInWeek(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
+  const cellItems=(empId,date)=>sortByTime(assignments.filter(a=>a.employeeId===empId&&a.date===date&&matchesFilter(a)));
+  const visibleEmployees=soloEmp?employees.filter(e=>e.id===soloEmp):employees.filter(e=>showsInWeek(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveAssignment(dragId,empId,date);setDragId(null);setDropCell(null);}
   function makePDF(){generateWeekPDF(visibleEmployees,assignments,projects,wk,yr,days,pdfFields);}
   const wholeMsg=`Wochenplan KW ${wk}/${yr} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}). Details siehe angehängtes PDF.`+(appUrl?"\nPlan online: "+appUrl:"");
@@ -1080,12 +1116,12 @@ function Wochenplanung({store}){
       <span className="spacer"></span>
       <button className="btn sm" onClick={makePDF}><Ic d={ICONS.pdf}/> PDF</button>
       <a className="btn sm green" href={waLink("",wholeMsg)} target="_blank" rel="noopener"><Ic d={ICONS.wa}/> Teilen</a>
-      <button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne senden</button>
+      {!soloEmp&&<button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne senden</button>}
     </div>
     <div className="flex wrap" style={{marginBottom:10,gap:8}}>
-      <div style={{position:"relative"}}>
+      {!soloEmp&&<div style={{position:"relative"}}>
         <Ic d={ICONS.search} style={{position:"absolute",left:9,top:9,width:15,height:15,color:"var(--muted)"}}/>
-        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Mitarbeiter suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>
+        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Mitarbeiter suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>}
       <select style={{width:"auto",padding:"7px 10px"}} value={projFilter} onChange={e=>setProjFilter(e.target.value)}>
         <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
       <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
@@ -1120,9 +1156,11 @@ function Wochenplanung({store}){
                 style={{borderLeftColor:col,...(hidden0?{background:"#f1f5f9"}:{})}}
                 title={more>0?items.length+" Termine – klicken zum Aufklappen":"Klicken für Details / Route"}
                 onClick={e=>{e.stopPropagation();setDayPop({employeeId:emp.id,date});}}>
-                {!hidden0&&a0.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
-                {hidden0&&<span className="ausland" title="privat">🔒</span>}
-                <span className="cn">{label0}{more>0?<span className="badge b-gray" style={{marginLeft:6,padding:"0 6px"}}>+{more}</span>:null}</span>
+                <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                  {!hidden0&&a0.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
+                  {hidden0&&<span className="ausland" title="privat">🔒</span>}
+                  <span className="cn" style={{flex:1,minWidth:0}}>{label0}</span>
+                  {more>0&&<span className="badge b-gray" style={{flexShrink:0,padding:"0 6px",fontSize:10}}>+{more}</span>}</div>
                 <span className="cs">{[hidden0?"":(a0.projektrolle||(a0.type==="frei"?"Freier Termin":a0.einsatz)),timeLabel(a0)].filter(Boolean).join(" · ")||"—"}</span>
               </div>);})()}
             {items.length===0&&!abs&&<div className="add-hint">+</div>}
@@ -1143,7 +1181,7 @@ function DayPopup({store,ctx,onEdit,onAdd,onClose}){
   const{employees,projects,assignments,techAssignments,versicherungen,isAdmin,canTermFor}=store;
   const emp=employees.find(e=>e.id===ctx.employeeId);
   const home=emp&&emp.adresse?emp.adresse:"";
-  const items=assignments.filter(a=>a.employeeId===ctx.employeeId&&a.date===ctx.date);
+  const items=sortByTime(assignments.filter(a=>a.employeeId===ctx.employeeId&&a.date===ctx.date));
   const dayStops=collectDayStops(ctx.employeeId,ctx.date,assignments,techAssignments,projects);
   const dayUrl=dayRouteUrl(dayStops,home);
   const mayEdit=canTermFor?canTermFor(ctx.employeeId):true;
@@ -1385,7 +1423,7 @@ function SendModal({store,onClose}){
   const dname=d=>DAYNAMES[(d.getDay()+6)%7];
   function personText(e,items){
     let t=`Hallo ${e.name.split(",")[1]?.trim()||e.name}, dein Einsatzplan für KW ${wk} (${fmtDEShort(days[0])}–${fmtDEShort(days[days.length-1])}):\n`;
-    days.forEach((dd,i)=>{const d=ymd(dd);const dayItems=items.filter(a=>a.date===d);if(!dayItems.length)return;
+    days.forEach((dd,i)=>{const d=ymd(dd);const dayItems=sortByTime(items.filter(a=>a.date===d));if(!dayItems.length)return;
       t+=`\n${dname(dd)} ${fmtDEShort(dd)}:`;
       dayItems.forEach(a=>{
         if(a.type==="frei"&&a.privat){t+=`\n  • Geblockt${timeLabel(a)?" "+timeLabel(a)+" Uhr":" ganztägig"}`;return;}
@@ -1396,7 +1434,7 @@ function SendModal({store,onClose}){
         adrs.forEach(ad=>{t+=`\n    Adresse: ${mapsLink(ad)}`;});});
       const stops=collectDayStops(e.id,d,assignments,techAssignments,projects);const url=dayRouteUrl(stops,e.adresse);
       if(url)t+=`\n    🧭 Tagesroute: ${url}`;});
-    if(appUrl)t+=`\n\nBei Änderungen bitte aktiv in den Plan schauen: ${appUrl}`;
+    t+=`\n\nDein persönlicher Plan (Termine ansehen, Route & Kalender): ${personalLink(e.id,appUrl)}`;
     return t;}
   return(<Modal title={"Einsatzpläne senden · nächste Woche (KW "+wk+")"} onClose={onClose} wide
     footer={<button className="btn" onClick={onClose}>Schließen</button>}>
@@ -1412,6 +1450,7 @@ function SendModal({store,onClose}){
              style={(e.phone||"").replace(/[^0-9]/g,"")?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.wa}/></a>
           <a className="btn sm primary" href={e.email?mailLink(e.email,"Dein Einsatzplan KW "+wk,msg):undefined}
              style={e.email?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.mail}/></a>
+          <button className="btn sm" title="Persönlichen Link kopieren" onClick={()=>{navigator.clipboard.writeText(personalLink(e.id,appUrl));store.showToast("Persönlicher Link kopiert");}}><Ic d={ICONS.link}/></button>
         </div>);})}
   </Modal>);
 }
@@ -1437,11 +1476,11 @@ function buildTechMessage(emp,t,project,appUrl){
   if(appUrl)b+="\nAktueller Plan: "+appUrl;
   return b;
 }
-function Technikerplanung({store}){
-  const{employees,projects,techAssignments,absences,api,workdays,versicherungen,awCapacity,rolePlanung}=store;
+function Technikerplanung({store,soloEmp}){
+  const{employees,projects,techAssignments,absences,api,workdays,versicherungen,awCapacity,rolePlanung,isAdmin}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
-  const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);
+  const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);const[techPop,setTechPop]=useState(null);
   const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");
   const monday=mondayOfWeek(yr,wk);
   const wdays=workDaysOfWeek(monday,workdays);const days=wdays.map(w=>w.date);const dayIdx=wdays.map(w=>w.idx);
@@ -1451,8 +1490,8 @@ function Technikerplanung({store}){
     if(projFilter&&t.projectNr!==projFilter)return false;
     if(versFilter&&t.versicherung!==versFilter)return false;
     return true;}
-  const cellItems=(empId,date)=>techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t));
-  const visibleEmployees=employees.filter(e=>showsInTech(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
+  const cellItems=(empId,date)=>sortByTime(techAssignments.filter(t=>t.employeeId===empId&&t.date===date&&matchesFilter(t)));
+  const visibleEmployees=soloEmp?employees.filter(e=>e.id===soloEmp):employees.filter(e=>showsInTech(e,rolePlanung)&&(!empQ||e.name.toLowerCase().includes(empQ.toLowerCase())));
   function onDrop(empId,date){if(!dragId)return;api.moveTech(dragId,empId,date);setDragId(null);setDropCell(null);}
   const usedVers=versicherungen.filter(v=>v.active!==false);
   const activeProjectsForFilter=projects.filter(p=>p.status!=="Beendet");
@@ -1501,17 +1540,19 @@ function Technikerplanung({store}){
             onDragLeave={()=>setDropCell(c=>c===cellKey?null:c)}
             onDrop={e=>{e.preventDefault();onDrop(emp.id,date);}}>
             {abs&&<div className="chip" title={abs.art} style={{background:ABSENCE_COLORS[abs.art]||"#64748b",color:"#fff",borderLeftColor:"rgba(0,0,0,.25)"}}><span className="cn">{abs.art}</span></div>}
-            {items.map(t=>{const p=projects.find(x=>x.nr===t.projectNr);const col=techColor(t,versicherungen);
-              const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);const aw=awSum(t);
-              const label=t.autohaus||(p?(p.alias||p.name):"Autohaus");
-              return(<div key={t.id} className="chip"
-                draggable onDragStart={()=>setDragId(t.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
-                style={{borderLeftColor:col}} title={label+(t.versicherung?"\nVersicherung: "+t.versicherung:"")+(aw?"\nAW: "+fmtAW(aw):"")+((t.sendLog||[]).length?"\nVersendet: "+t.sendLog.length+"x":"")}
-                onClick={e=>{e.stopPropagation();setModal({employeeId:emp.id,date,editing:t});}}>
-                <span className="cn">{label}</span>
-                <span className="cs">{[timeLabel(t),veh.length?veh.length+" Fzg":"",aw?fmtAW(aw)+" AW":""].filter(Boolean).join(" · ")}</span>
-                {(t.sendLog||[]).length>0&&<span className="cby">✓ versendet</span>}
-              </div>);})}
+            {items.length>0&&(()=>{const t0=items[0];const p=projects.find(x=>x.nr===t0.projectNr);const col=techColor(t0,versicherungen);
+              const label=t0.autohaus||(p?(p.alias||p.name):"Autohaus");const veh=(t0.vehicles||[]).filter(v=>v.kennzeichen||v.vin);const aw=awSum(t0);
+              const more=items.length-1;const single=items.length===1;
+              return(<div className="chip"
+                draggable={single} onDragStart={()=>single&&setDragId(t0.id)} onDragEnd={()=>{setDragId(null);setDropCell(null);}}
+                style={{borderLeftColor:col}} title={more>0?items.length+" Technikertermine – klicken zum Aufklappen":label}
+                onClick={e=>{e.stopPropagation();setTechPop({employeeId:emp.id,date});}}>
+                <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                  <span className="cn" style={{flex:1,minWidth:0}}>{label}</span>
+                  {more>0&&<span className="badge b-gray" style={{flexShrink:0,padding:"0 6px",fontSize:10}}>+{more}</span>}</div>
+                <span className="cs">{[timeLabel(t0),veh.length?veh.length+" Fzg":"",aw?fmtAW(aw)+" AW":""].filter(Boolean).join(" · ")}</span>
+                {(t0.sendLog||[]).length>0&&<span className="cby">✓ versendet</span>}
+              </div>);})()}
             {items.length>0&&dayAW>0&&<div className="mini muted" style={{position:"absolute",bottom:2,right:5,fontSize:9}}>{fmtAW(dayAW)} AW</div>}
             {items.length===0&&!abs&&<div className="add-hint">+</div>}
           </div>);})}
@@ -1532,9 +1573,39 @@ function Technikerplanung({store}){
               {r.done>0&&<span className="muted">· {fmtAW(r.done)} erledigt</span>}</div></div>);})}
       </div></div>}
     {modal&&<TechModal store={store} ctx={modal} onClose={()=>setModal(null)}/>}
+    {techPop&&<TechDayPopup store={store} ctx={techPop}
+      onEdit={t=>{const c=techPop;setTechPop(null);setModal({employeeId:c.employeeId,date:c.date,editing:t});}}
+      onAdd={()=>{const c=techPop;setTechPop(null);setModal({employeeId:c.employeeId,date:c.date});}}
+      onClose={()=>setTechPop(null)}/>}
   </div>);
 }
 
+function TechDayPopup({store,ctx,onEdit,onAdd,onClose}){
+  const{employees,projects,techAssignments,versicherungen,api}=store;
+  const emp=employees.find(e=>e.id===ctx.employeeId);const home=emp&&emp.adresse?emp.adresse:"";
+  const items=sortByTime(techAssignments.filter(t=>t.employeeId===ctx.employeeId&&t.date===ctx.date));
+  const mayEdit=store.can("tech_edit");
+  return(<Modal title={"Technikertermine · "+fmtDE(ctx.date)+" · "+(emp?emp.name:"")} onClose={onClose}
+    footer={<><button className="btn" onClick={onClose}>Schließen</button><span className="spacer"></span>
+      {mayEdit&&<button className="btn primary" onClick={onAdd}><Ic d={ICONS.plus}/> Termin hinzufügen</button>}</>}>
+    {items.length===0&&<div className="muted mini" style={{marginBottom:10}}>Keine Technikertermine an diesem Tag.</div>}
+    {items.map(t=>{const p=projects.find(x=>x.nr===t.projectNr);const col=techColor(t,versicherungen);
+      const label=t.autohaus||(p?(p.alias||p.name):"Autohaus");const aw=awSum(t);const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);
+      const rHome=t.adresse&&home?dayRouteUrl([t.adresse],home):null;const rStd=t.adresse?navRouteUrl([t.adresse]):null;
+      const meta=[t.versicherung,timeLabel(t),veh.length?veh.length+" Fzg":"",aw?fmtAW(aw)+" AW":""].filter(Boolean).join(" · ");
+      return(<div key={t.id} className="rec-row" style={{borderLeft:"4px solid "+col,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 160px",minWidth:0}}>
+          <div style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis"}}>{label}{(t.sendLog||[]).length>0&&<span className="badge b-green" style={{marginLeft:6}}>✓ versendet</span>}</div>
+          <div className="mini muted">{meta||"—"}</div></div>
+        <button className="btn sm" onClick={()=>onEdit(t)}><Ic d={ICONS.edit}/> {mayEdit?"Bearbeiten":"Ansehen"}</button>
+        <button className="btn sm" onClick={()=>downloadICS({title:"Technikereinsatz "+label,date:ctx.date,allDay:t.allDay,startTime:t.startTime,endTime:t.endTime,
+          location:t.adresse,description:[t.versicherung?("Versicherung: "+t.versicherung):"",t.dauer?("Dauer: "+t.dauer):"",t.note].filter(Boolean).join("\n"),
+          contactName:t.kontaktName,contactTel:t.kontaktTel,contactMail:t.kontaktMail})} title="In Kalender speichern"><Ic d={ICONS.week}/> Kalender</button>
+        {rHome&&<a className="btn sm" href={rHome} target="_blank" rel="noopener">🏠 ab Wohnort</a>}
+        {rStd&&<a className="btn sm" href={rStd} target="_blank" rel="noopener">📍 ab Standort</a>}
+      </div>);})}
+  </Modal>);
+}
 function TechModal({store,ctx,onClose}){
   const{projects,employees,versicherungen,absences,api,appUrl,myEmail}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
@@ -1731,7 +1802,7 @@ function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl,pdfFields){
   doc.setFontSize(10);doc.setTextColor(120);doc.text("KW "+wk+" / "+yr+"  ("+fmtDE(ymd(days[0]))+" – "+fmtDE(ymd(days[days.length-1]))+")",14,23);
   doc.setTextColor(20);
   const body=[];
-  days.forEach((d,i)=>{const date=ymd(d);const dayItems=items.filter(a=>a.date===date);
+  days.forEach((d,i)=>{const date=ymd(d);const dayItems=sortByTime(items.filter(a=>a.date===date));
     if(!dayItems.length){body.push([dn(d)+" "+fmtDEShort(d),"—"]);return;}
     dayItems.forEach((a,idx)=>{const cell=assignmentPdfLines(a,projects,pdfFields).join("\n");
       body.push([idx===0?dn(d)+" "+fmtDEShort(d):"",cell]);});});
@@ -2170,13 +2241,16 @@ function Nutzerverwaltung({store}){
     {view==="users"?<>
       <div className="flex" style={{marginBottom:12}}><span className="spacer"></span>
         <button className="btn primary" onClick={()=>setEdit({})}><Ic d={ICONS.plus}/> Neuer Nutzer</button></div>
-      <div className="tbl-wrap"><table><thead><tr><th>E-Mail</th><th>Name</th><th>Rolle</th><th>Mitarbeiter</th><th>Status</th><th></th></tr></thead><tbody>
-        {appUsers.length===0&&<tr><td colSpan="6"><div className="empty"><div className="big">Keine Benutzer</div></div></td></tr>}
+      <div className="tbl-wrap"><table><thead><tr><th>E-Mail</th><th>Name</th><th>Rolle</th><th>Mitarbeiter</th><th>Pers. Link</th><th>Status</th><th></th></tr></thead><tbody>
+        {appUsers.length===0&&<tr><td colSpan="7"><div className="empty"><div className="big">Keine Benutzer</div></div></td></tr>}
         {appUsers.map(u=>(<tr key={u.email} className="clickrow" onClick={()=>setEdit({...u,email0:u.email})} title="Bearbeiten">
           <td style={{fontWeight:600}}>{u.email}{u.email===(myEmail||"").toLowerCase()&&<span className="badge b-blue" style={{marginLeft:6}}>Du</span>}</td>
           <td>{u.name||<span className="muted">—</span>}</td>
           <td><span className="badge b-violet">{u.rolle}</span></td>
           <td className="mini">{empName(u.employeeId)||<span className="muted">—</span>}</td>
+          <td onClick={e=>e.stopPropagation()}>{u.employeeId?
+            <button className="btn ghost sm" title="Persönlichen Plan-Link kopieren" onClick={()=>{navigator.clipboard.writeText(personalLink(u.employeeId,store.appUrl));store.showToast("Persönlicher Link kopiert");}}><Ic d={ICONS.link}/> kopieren</button>
+            :<span className="muted mini" title="Erst einen Mitarbeiter verknüpfen">—</span>}</td>
           <td>{u.active!==false?<span className="badge b-green">aktiv</span>:<span className="badge b-gray">inaktiv</span>}</td>
           <td onClick={e=>e.stopPropagation()}><div className="flex">
             <button className="btn sm" onClick={()=>setEdit({...u,email0:u.email})}><Ic d={ICONS.edit}/> Bearbeiten</button>
@@ -2299,19 +2373,29 @@ function VersEditor({versicherungen,api,showToast}){
       <button className="btn primary sm" onClick={add}><Ic d={ICONS.plus}/> Hinzufügen</button></div></div></div>);
 }
 function RolePlanungEditor({roles,employees,rolePlanung,api,showToast}){
+  const[nw,setNw]=useState("");
   const all=[...new Set([...(roles||[]),...employees.map(e=>e.role).filter(Boolean)])];
   function setRP(role,patch){const cur=planungFor(role,rolePlanung);
     const next={...(rolePlanung||{}),[role]:{...cur,...patch}};api.setSetting("role_planung",next);}
-  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Rollen in der Planung</h3></div><div className="card-b">
-    <p className="muted mini" style={{marginTop:0}}>Lege je Rolle fest, in welchem Planer die Personen erscheinen. So tauchen z. B. Techniker/Monteure nur in der Technikerplanung auf. Neue Rollen legst du unten unter „Rollen" an.</p>
-    <table><thead><tr><th>Rolle</th><th style={{width:150,textAlign:"center"}}>Wochenplanung</th><th style={{width:160,textAlign:"center"}}>Technikerplanung</th></tr></thead><tbody>
-      {all.map(r=>{const p=planungFor(r,rolePlanung);const cnt=employees.filter(e=>e.role===r).length;
-        return(<tr key={r}><td><b>{r}</b> <span className="mini muted">· {cnt}</span></td>
+  function addRole(){const v=nw.trim();if(!v)return;if((roles||[]).some(r=>r.toLowerCase()===v.toLowerCase())){showToast("Rolle existiert bereits");setNw("");return;}
+    api.setSetting("roles",[...(roles||[]),v]);setNw("");showToast("Rolle „"+v+"\" angelegt");}
+  function delRole(r){const cnt=employees.filter(e=>e.role===r).length;
+    if(cnt>0){if(!confirm("Der Rolle „"+r+"\" sind noch "+cnt+" Mitarbeiter zugeordnet. Rolle trotzdem aus der Liste entfernen? (Die Mitarbeiter behalten den Text, bis du sie umstellst.)"))return;}
+    api.setSetting("roles",(roles||[]).filter(x=>x!==r));showToast("Rolle entfernt");}
+  return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Rollen &amp; Planzuordnung</h3></div><div className="card-b">
+    <p className="muted mini" style={{marginTop:0}}>Lege Rollen an (z. B. Junior Projektleiter, Projektleiter, Techniker, Monteur) und bestimme je Rolle, in welchem Planer die Personen erscheinen – z. B. Techniker/Monteur in der Technikerplanung, Projektleiter in der Wochenplanung. Eine Rolle darf auch in beiden erscheinen.</p>
+    <div className="flex" style={{gap:8,marginBottom:12}}>
+      <input value={nw} onChange={e=>setNw(e.target.value)} placeholder="Neue Rolle, z. B. Junior Projektleiter" onKeyDown={e=>{if(e.key==="Enter")addRole();}} style={{maxWidth:300}}/>
+      <button className="btn primary sm" onClick={addRole}><Ic d={ICONS.plus}/> Rolle hinzufügen</button></div>
+    <div className="tbl-wrap"><table><thead><tr><th>Rolle</th><th style={{width:140,textAlign:"center"}}>Wochenplanung</th><th style={{width:150,textAlign:"center"}}>Technikerplanung</th><th style={{width:70}}></th></tr></thead><tbody>
+      {all.map(r=>{const p=planungFor(r,rolePlanung);const cnt=employees.filter(e=>e.role===r).length;const inList=(roles||[]).includes(r);
+        return(<tr key={r}><td><b>{r}</b> <span className="mini muted">· {cnt} MA{!inList&&<span title="nur bei Mitarbeitern vergeben, nicht in der Rollenliste"> · (nicht in Liste)</span>}</span></td>
           <td style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={p.woche} onChange={e=>setRP(r,{woche:e.target.checked})}/></td>
-          <td style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={p.technik} onChange={e=>setRP(r,{technik:e.target.checked})}/></td></tr>);})}
-      {all.length===0&&<tr><td colSpan="3" className="muted mini">Noch keine Rollen angelegt.</td></tr>}
-    </tbody></table>
-    <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Standard ohne Häkchen: Rollen mit „Techniker"/„Monteur" → Technikerplanung, alle anderen → Wochenplanung. Eine Rolle darf auch in beiden erscheinen.</p>
+          <td style={{textAlign:"center"}}><input type="checkbox" style={{width:"auto"}} checked={p.technik} onChange={e=>setRP(r,{technik:e.target.checked})}/></td>
+          <td>{inList&&<button className="btn ghost sm" onClick={()=>delRole(r)} title="Rolle löschen"><Ic d={ICONS.trash}/></button>}</td></tr>);})}
+      {all.length===0&&<tr><td colSpan="4" className="muted mini">Noch keine Rollen angelegt.</td></tr>}
+    </tbody></table></div>
+    <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Ohne Häkchen gilt der Standard: Rollen mit „Techniker"/„Monteur" → Technikerplanung, alle anderen → Wochenplanung.</p>
   </div></div>);
 }
 function Einstellungen({store}){
@@ -2352,7 +2436,6 @@ function Einstellungen({store}){
           <input type="checkbox" style={{width:"auto"}} checked={on} onChange={e=>{api.setSetting("pdf_fields",{...pdfFields,[k]:e.target.checked});showToast("PDF-Einstellung gespeichert");}}/> {label}</label>);})}</div>
       <p className="mini muted" style={{marginTop:10,marginBottom:0}}>Kundenadresse = die im Projekt hinterlegte Adresse (bzw. bei freien Terminen die dort eingegebene). Auslandseinsätze werden immer gekennzeichnet.</p></div></div>
 
-    <ListEditor title="Rollen" desc="Rollen für Mitarbeiter – frei definierbar (z. B. Projektleiter, Projektassistenz, Techniker, Monteur)." skey="roles" items={roles} api={api} showToast={showToast}/>
     <RolePlanungEditor roles={roles} employees={employees} rolePlanung={rolePlanung} api={api} showToast={showToast}/>
     <ListEditor title="Einsatzstatus / Tätigkeiten" desc="Was ein Mitarbeiter im Projekt macht (z. B. Begutachtung, Projektleitung)." skey="einsatz" items={einsatz} api={api} showToast={showToast}/>
     <ListEditor title="Projekttypen" desc="Kategorien für Projekte (z. B. Versicherungen, Hagelcover)." skey="typen" items={typen} api={api} showToast={showToast}/>
