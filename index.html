@@ -212,7 +212,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.0";
+const APP_VERSION="v1.5.1";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -578,18 +578,41 @@ function NotifyButtons({emp,message,subject,extra}){
 function Root(){
   const[cfg,setCfg]=useState(getConfig());
   const[sb,setSb]=useState(null);const[session,setSession]=useState(null);const[booting,setBooting]=useState(true);
+  const[recovery,setRecovery]=useState(()=>/type=recovery/.test(window.location.hash||""));
   useEffect(()=>{
     if(!cfg.url||!cfg.key){setBooting(false);return;}
     let client;try{client=supabase.createClient(cfg.url,cfg.key);}catch(e){setBooting(false);return;}
     setSb(client);
     client.auth.getSession().then(({data})=>{setSession(data.session);setBooting(false);});
-    const{data:sub}=client.auth.onAuthStateChange((_e,s)=>setSession(s));
+    const{data:sub}=client.auth.onAuthStateChange((e,s)=>{setSession(s);if(e==="PASSWORD_RECOVERY")setRecovery(true);});
     return()=>sub.subscription.unsubscribe();
   },[cfg]);
   if(booting)return<div className="center-screen"><div className="spin"></div></div>;
   if(!cfg.url||!cfg.key)return<Setup onSaved={()=>setCfg(getConfig())}/>;
+  if(recovery&&sb)return<SetPassword sb={sb} onDone={()=>{setRecovery(false);try{history.replaceState(null,"",location.origin+location.pathname);}catch(e){}}}/>;
   if(!session)return<Login sb={sb}/>;
   return<App sb={sb} session={session}/>;
+}
+
+function SetPassword({sb,onDone}){
+  const[pw,setPw]=useState("");const[pw2,setPw2]=useState("");const[err,setErr]=useState("");const[ok,setOk]=useState(false);const[busy,setBusy]=useState(false);
+  async function save(){setErr("");
+    if(pw.length<8){setErr("Bitte mindestens 8 Zeichen wählen.");return;}
+    if(pw!==pw2){setErr("Die beiden Passwörter stimmen nicht überein.");return;}
+    setBusy(true);const{error}=await sb.auth.updateUser({password:pw});setBusy(false);
+    if(error){setErr(error.message);return;}setOk(true);}
+  if(ok)return(<div className="center-screen"><div className="auth-card">
+    <h1>Passwort geändert ✓</h1><p className="lead">Dein neues Passwort ist gespeichert. Du bist jetzt angemeldet.</p>
+    <button className="btn primary" style={{width:"100%"}} onClick={onDone}>Weiter zur App</button>
+    <p className="mini muted" style={{marginTop:12,textAlign:"center"}}>Version {APP_VERSION}</p></div></div>);
+  return(<div className="center-screen"><div className="auth-card">
+    <h1>Neues Passwort setzen</h1><p className="lead">Vergib ein neues Passwort für deinen Zugang.</p>
+    {err&&<div className="err">{err}</div>}
+    <div className="field"><label>Neues Passwort</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)}/></div>
+    <div className="field"><label>Neues Passwort wiederholen</label><input type="password" value={pw2} onChange={e=>setPw2(e.target.value)} onKeyDown={e=>e.key==="Enter"&&save()}/></div>
+    <button className="btn primary" style={{width:"100%"}} onClick={save} disabled={busy}>{busy?"Speichern…":"Passwort speichern"}</button>
+    <p className="mini muted" style={{marginTop:12,textAlign:"center"}}>Version {APP_VERSION} · {APP_VERSION_DATE}</p>
+  </div></div>);
 }
 
 function Setup({onSaved}){
@@ -618,7 +641,7 @@ function Login({sb}){
   async function submit(){setErr("");setInfo("");setBusy(true);const{error}=await sb.auth.signInWithPassword({email:email.trim(),password:pw});setBusy(false);if(error)setErr(error.message);}
   async function forgot(){setErr("");setInfo("");
     if(!email.trim()){setErr("Bitte zuerst deine E-Mail-Adresse eingeben.");return;}
-    const{error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:window.location.href});
+    const{error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname});
     if(error)setErr(error.message);else setInfo("E-Mail zum Zurücksetzen des Passworts wurde gesendet (bitte auch den Spam-Ordner prüfen).");}
   return(<div className="center-screen"><div className="auth-card">
     <h1>DRS Personalmanagement</h1><p className="lead">Bitte anmelden.</p>
