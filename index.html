@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.6";
+const APP_VERSION="v1.5.7";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -1654,7 +1654,7 @@ function TechDayPopup({store,ctx,onEdit,onAdd,onClose}){
   </Modal>);
 }
 function TechModal({store,ctx,onClose}){
-  const{projects,employees,versicherungen,absences,api,appUrl,myEmail}=store;
+  const{projects,employees,versicherungen,absences,assignments,api,appUrl,myEmail}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
   const activeProjects=projects.filter(p=>p.status!=="Beendet");
   const[mode,setMode]=useState("tech");
@@ -1723,6 +1723,13 @@ function TechModal({store,ctx,onClose}){
   function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
   const mayEdit=store.can("tech_edit");
   const ro=!mayEdit;
+  // Projektleiter des zugeordneten Projekts ermitteln (für WhatsApp-Kontakt durch den Techniker)
+  const plRole=pickedProject?computeRoles(pickedProject,assignments,employees)["Projektleiter"]:null;
+  const plName=(plRole&&plRole.name)||(pickedProject&&(pickedProject.leiter||[])[0])||"";
+  const plEmp=plName?employees.find(e=>e.name===plName):null;
+  const plPhone=plEmp?plEmp.phone:"";
+  const plOrt=(pickedProject&&pickedProject.adresse)||adresse||"";
+  const plMsg=pickedProject?`Projekt (${pickedProject.nr}) ${pickedProject.name}${plOrt?" und "+plOrt:""}: Ich (${emp?.name||""}) habe eine Frage: `:"";
 
   return(<Modal title={(ed?(mayEdit?"Technikertermin bearbeiten":"Technikertermin ansehen"):"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
     footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
@@ -1745,6 +1752,13 @@ function TechModal({store,ctx,onClose}){
       <div className="notify-box" style={{marginBottom:14}}>
         <div style={{fontWeight:700,fontSize:15}}>{pickedProject?((pickedProject.alias?pickedProject.alias+" · ":"")+pickedProject.name):(autohaus||"Technikereinsatz")}</div>
         {pickedProject&&<div className="mini muted">Projekt-Nr. {pickedProject.nr}</div>}</div>
+      {pickedProject&&<div className="notify-box" style={{marginBottom:14}}>
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Frage an den Projektleiter</div>
+        {plPhone?<>
+          <div className="mini muted" style={{marginBottom:8}}>Projektleiter: <b>{plName}</b>. WhatsApp öffnet sich mit vorbereitetem Text – tippe deine Frage einfach dahinter.</div>
+          <a className="btn green sm" href={waLink(plPhone,plMsg)} target="_blank" rel="noopener"><Ic d={ICONS.wa}/> Projektleiter per WhatsApp fragen</a></>
+        :<div className="mini muted">{plName?("Für den Projektleiter „"+plName+"\" ist keine Telefonnummer hinterlegt."):"Für dieses Projekt ist kein Projektleiter hinterlegt."} Bitte an die Planung wenden.</div>}
+      </div>}
       <div className="row2">
         <div className="field"><label>Autohaus</label><div className="ro-val">{autohaus||"—"}</div></div>
         <div className="field"><label>Datum / Zeit</label><div className="ro-val">{fmtDE(ctx.date)} · {allDay?"ganztägig":((startTime||"")+(endTime?"–"+endTime:"")+" Uhr")}</div></div></div>
