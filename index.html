@@ -152,6 +152,7 @@ textarea{resize:vertical;min-height:60px}
 .rec-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:12.5px}
 .diffcol{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px}
 .center-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#0f172a,#1e293b)}
+.ver-badge{font-size:10px;font-weight:600;color:#cbd5e1;background:rgba(148,163,184,.18);border:1px solid rgba(148,163,184,.3);padding:1px 7px;border-radius:999px;white-space:nowrap;letter-spacing:.3px}
 .auth-card{background:#fff;border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:440px;padding:32px}
 .auth-card.wide{max-width:720px}
 .auth-card h1{font-size:21px;margin:0 0 4px}
@@ -211,6 +212,8 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
+const APP_VERSION="v1.5.0";
+const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
 function getConfig(){
@@ -626,6 +629,7 @@ function Login({sb}){
     <button className="btn primary" style={{width:"100%"}} onClick={submit} disabled={busy}>{busy?"Anmelden…":"Einloggen"}</button>
     <p className="mini muted" style={{marginTop:16,textAlign:"center"}}>
       <a href="#" onClick={e=>{e.preventDefault();forgot();}}>Passwort vergessen?</a></p>
+    <p className="mini muted" style={{marginTop:8,textAlign:"center"}}>Version {APP_VERSION} · {APP_VERSION_DATE}</p>
   </div></div>);
 }
 
@@ -641,7 +645,7 @@ function MitarbeiterView({store,empId,emp,sb,canExit}){
   const first=(emp.name||"").includes(",")?emp.name.split(",")[1].trim():emp.name;
   return(<div>
     <div className="topnav">
-      <div className="brand">Mein Plan <small>{emp.name}</small></div>
+      <div className="brand">Mein Plan <small>{emp.name}</small> <span className="ver-badge" title={"Version "+APP_VERSION+" · "+APP_VERSION_DATE}>{APP_VERSION}</span></div>
       <span className="spacer"></span>
       <div className="tnav-user">
         {canExit&&<a className="btn sm" href={location.origin+location.pathname}>Volle Ansicht</a>}
@@ -831,7 +835,7 @@ function App({sb,session}){
 
   return(<div>
     <div className="topnav">
-      <div className="brand">DRS Personal <small>Management</small></div>
+      <div className="brand">DRS Personal <small>Management</small> <span className="ver-badge" title={"Version "+APP_VERSION+" · "+APP_VERSION_DATE}>{APP_VERSION}</span></div>
       <div className="tnav">{NAV.map(([k,l,ic])=>(
         <button key={k} className={"tab"+(activeTab===k?" active":"")} onClick={()=>setTab(k)}><Ic d={ic}/>{l}</button>))}</div>
       <div className="tnav-user">
@@ -2410,7 +2414,7 @@ function Einstellungen({store}){
   const empty=projects.length===0&&employees.length===0;
   const cp=t=>{navigator.clipboard.writeText(t);setCopied(t);setTimeout(()=>setCopied(""),1600);};
   return(<div>
-    <h2 className="ttl">Einstellungen</h2><div className="sub">Arbeitstage, Versicherungen, Rollen, Status, Projekttypen, App-Link &amp; Daten</div>
+    <h2 className="ttl">Einstellungen</h2><div className="sub">Arbeitstage, Versicherungen, Rollen, Status, Projekttypen, App-Link &amp; Daten · <b>Version {APP_VERSION}</b> ({APP_VERSION_DATE})</div>
     {empty&&<div className="card" style={{marginBottom:18,borderColor:"var(--brand)"}}><div className="card-b">
       <div className="flex" style={{alignItems:"flex-start"}}><Ic d={ICONS.db} style={{width:26,height:26,color:"var(--brand)",flexShrink:0}}/>
         <div><div style={{fontWeight:600,marginBottom:4}}>Datenbank ist leer</div>
