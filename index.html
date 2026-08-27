@@ -153,6 +153,8 @@ textarea{resize:vertical;min-height:60px}
 .diffcol{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px}
 .center-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#0f172a,#1e293b)}
 .ver-badge{font-size:10px;font-weight:600;color:#cbd5e1;background:rgba(148,163,184,.18);border:1px solid rgba(148,163,184,.3);padding:1px 7px;border-radius:999px;white-space:nowrap;letter-spacing:.3px}
+.btn.nav-wk{border-color:var(--brand);color:var(--brand-d,#1d4ed8);font-weight:600;background:var(--brand-l,#eff6ff)}
+.btn.nav-wk:hover{background:var(--brand);color:#fff}
 .auth-card{background:#fff;border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:440px;padding:32px}
 .auth-card.wide{max-width:720px}
 .auth-card h1{font-size:21px;margin:0 0 4px}
@@ -212,7 +214,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.3";
+const APP_VERSION="v1.5.5";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -1148,22 +1150,22 @@ function Wochenplanung({store,soloEmp}){
 
   return(<div>
     <div className="flex wrap" style={{marginBottom:12}}>
-      <button className="btn sm" onClick={()=>nav(-1)}><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
+      <button className="btn sm nav-wk" onClick={()=>nav(-1)} title="Eine Kalenderwoche zurück"><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/> Zurück</button>
       <div style={{fontWeight:700,fontSize:16,minWidth:180,textAlign:"center"}}>KW {wk} · {yr}
         <div className="mini muted" style={{fontWeight:400}}>{fmtDEShort(days[0])} – {fmtDEShort(days[days.length-1])}</div></div>
-      <button className="btn sm" onClick={()=>nav(1)}><Ic d={ICONS.chev}/></button>
+      <button className="btn sm nav-wk" onClick={()=>nav(1)} title="Eine Kalenderwoche vor">Weiter <Ic d={ICONS.chev}/></button>
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
       <button className="btn sm" onClick={makePDF}><Ic d={ICONS.pdf}/> PDF</button>
       <a className="btn sm green" href={waLink("",wholeMsg)} target="_blank" rel="noopener"><Ic d={ICONS.wa}/> Teilen</a>
       {!soloEmp&&<button className="btn sm primary" onClick={()=>setSendOpen(true)}><Ic d={ICONS.send}/> Pläne senden</button>}
     </div>
-    <div className="flex wrap" style={{marginBottom:10,gap:8}}>
-      {!soloEmp&&<div style={{position:"relative"}}>
+    {!soloEmp&&<div className="flex wrap" style={{marginBottom:10,gap:8}}>
+      <div style={{position:"relative"}}>
         <Ic d={ICONS.search} style={{position:"absolute",left:9,top:9,width:15,height:15,color:"var(--muted)"}}/>
-        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Mitarbeiter suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>}
-      {!soloEmp&&<label className="flex mini" style={{gap:6,cursor:"pointer",whiteSpace:"nowrap"}} title="Blendet Mitarbeiter aus, die die ganze angezeigte Woche abwesend sind">
-        <input type="checkbox" style={{width:"auto"}} checked={hideUnavail} onChange={e=>setHideUnavail(e.target.checked)}/> Nicht verfügbare ausblenden</label>}
+        <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Mitarbeiter suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>
+      <label className="flex mini" style={{gap:6,cursor:"pointer",whiteSpace:"nowrap"}} title="Blendet Mitarbeiter aus, die die ganze angezeigte Woche abwesend sind">
+        <input type="checkbox" style={{width:"auto"}} checked={hideUnavail} onChange={e=>setHideUnavail(e.target.checked)}/> Nicht verfügbare ausblenden</label>
       <select style={{width:"auto",padding:"7px 10px"}} value={projFilter} onChange={e=>setProjFilter(e.target.value)}>
         <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
       <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
@@ -1172,7 +1174,7 @@ function Wochenplanung({store,soloEmp}){
       <span className="spacer"></span>
       <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
         <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
-    </div>
+    </div>}
     <div className="week-scroll"><div className="week-grid" style={{gridTemplateColumns:"160px repeat("+days.length+",minmax(130px,1fr))"}}>
       <div className="wg-emp corner">Mitarbeiter</div>
       {days.map((d,i)=>(<div key={i} className={"wg-head"+(ymd(d)===todayYMD?" today":"")}>{DAYNAMES[dayIdx[i]]} {fmtDEShort(d)}</div>))}
@@ -1545,20 +1547,20 @@ function Technikerplanung({store,soloEmp}){
 
   return(<div>
     <div className="flex wrap" style={{marginBottom:12}}>
-      <button className="btn sm" onClick={()=>nav(-1)}><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/></button>
+      <button className="btn sm nav-wk" onClick={()=>nav(-1)} title="Eine Kalenderwoche zurück"><Ic d={ICONS.chev} style={{transform:"rotate(180deg)"}}/> Zurück</button>
       <div style={{fontWeight:700,fontSize:16,minWidth:180,textAlign:"center"}}>Technik · KW {wk} · {yr}
         <div className="mini muted" style={{fontWeight:400}}>{fmtDEShort(days[0])} – {fmtDEShort(days[days.length-1])}</div></div>
-      <button className="btn sm" onClick={()=>nav(1)}><Ic d={ICONS.chev}/></button>
+      <button className="btn sm nav-wk" onClick={()=>nav(1)} title="Eine Kalenderwoche vor">Weiter <Ic d={ICONS.chev}/></button>
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
       <span className="badge b-teal" title="Geplante AW dieser Woche (sichtbare Techniker)">Σ AW Woche: {fmtAW(weekPlanned)}</span>
     </div>
-    <div className="flex wrap" style={{marginBottom:10,gap:8}}>
+    {!soloEmp&&<div className="flex wrap" style={{marginBottom:10,gap:8}}>
       <div style={{position:"relative"}}>
         <Ic d={ICONS.search} style={{position:"absolute",left:9,top:9,width:15,height:15,color:"var(--muted)"}}/>
         <input style={{paddingLeft:30,width:190,padding:"7px 10px 7px 30px"}} placeholder="Techniker suchen…" value={empQ} onChange={e=>setEmpQ(e.target.value)}/></div>
-      {!soloEmp&&<label className="flex mini" style={{gap:6,cursor:"pointer",whiteSpace:"nowrap"}} title="Blendet Techniker aus, die die ganze angezeigte Woche abwesend sind">
-        <input type="checkbox" style={{width:"auto"}} checked={hideUnavail} onChange={e=>setHideUnavail(e.target.checked)}/> Nicht verfügbare ausblenden</label>}
+      <label className="flex mini" style={{gap:6,cursor:"pointer",whiteSpace:"nowrap"}} title="Blendet Techniker aus, die die ganze angezeigte Woche abwesend sind">
+        <input type="checkbox" style={{width:"auto"}} checked={hideUnavail} onChange={e=>setHideUnavail(e.target.checked)}/> Nicht verfügbare ausblenden</label>
       <select style={{width:"auto",padding:"7px 10px"}} value={projFilter} onChange={e=>setProjFilter(e.target.value)}>
         <option value="">Alle Projekte</option>{activeProjectsForFilter.map(p=><option key={p.nr} value={p.nr}>{p.alias||p.name}</option>)}</select>
       <select style={{width:"auto",padding:"7px 10px"}} value={versFilter} onChange={e=>setVersFilter(e.target.value)}>
@@ -1568,7 +1570,7 @@ function Technikerplanung({store,soloEmp}){
       <span className="mini muted">Rollen für Technikerplanung (in Einstellungen festgelegt)</span>
       <div className="flex wrap" style={{gap:10,fontSize:11.5}}>{usedVers.map(v=>(
         <span key={v.name} className="flex" style={{gap:5}}><span className="dot" style={{background:v.color}}></span>{v.name}</span>))}</div>
-    </div>
+    </div>}
     <div className="week-scroll"><div className="week-grid" style={{gridTemplateColumns:"160px repeat("+days.length+",minmax(140px,1fr))"}}>
       <div className="wg-emp corner">Techniker</div>
       {days.map((d,i)=>(<div key={i} className={"wg-head"+(ymd(d)===todayYMD?" today":"")}>{DAYNAMES[dayIdx[i]]} {fmtDEShort(d)}</div>))}
