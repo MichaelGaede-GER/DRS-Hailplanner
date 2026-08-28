@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.1";
+const APP_VERSION="v1.6.2";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -384,7 +384,27 @@ alter table login_log enable row level security;
 alter table change_log enable row level security;
 do $$ begin create policy "auth all" on app_users for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;
 do $$ begin create policy "auth all" on login_log for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;
-do $$ begin create policy "auth all" on change_log for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;`;
+do $$ begin create policy "auth all" on change_log for all to authenticated using (true) with check (true); exception when duplicate_object then null; end $$;
+-- Login-freie Terminbestätigung: Funktion, die per Token (empId~montag) Termine der Woche bestätigt.
+create or replace function public.confirm_plan(p_token text)
+returns integer language plpgsql security definer set search_path = public as $fn$
+declare v_emp uuid; v_mon date; v_pos int; v_count int := 0;
+begin
+  v_pos := position('~' in p_token);
+  if v_pos = 0 then return 0; end if;
+  begin
+    v_emp := substring(p_token from 1 for v_pos-1)::uuid;
+    v_mon := substring(p_token from v_pos+1)::date;
+  exception when others then return 0; end;
+  update assignments set confirmed = true, confirmed_at = now()
+    where employee_id = v_emp and date >= v_mon and date <= v_mon + 6;
+  get diagnostics v_count = row_count;
+  update tech_assignments set confirmed = true, confirmed_at = now()
+    where employee_id = v_emp and date >= v_mon and date <= v_mon + 6;
+  return v_count;
+end $fn$;
+grant execute on function public.confirm_plan(text) to anon, authenticated;
+`;
 
 /* ============ Seed & constants ============ */
 const SEED=JSON.parse(document.getElementById('seed-data').textContent);
@@ -600,9 +620,48 @@ function Root(){
   },[cfg]);
   if(booting)return<div className="center-screen"><div className="spin"></div></div>;
   if(!cfg.url||!cfg.key)return<Setup onSaved={()=>setCfg(getConfig())}/>;
+  const confToken=new URLSearchParams(window.location.search).get("bestaetigen")||"";
+  if(confToken&&sb)return<ConfirmPage sb={sb} token={confToken}/>;
   if(recovery&&sb)return<SetPassword sb={sb} onDone={()=>{setRecovery(false);try{history.replaceState(null,"",location.origin+location.pathname);}catch(e){}}}/>;
   if(!session)return<Login sb={sb}/>;
   return<App sb={sb} session={session}/>;
+}
+
+function ConfirmPage({sb,token}){
+  const[state,setState]=useState("loading");// loading | ok | error | setup
+  useEffect(()=>{let done=false;
+    (async()=>{
+      try{
+        const{data,error}=await sb.rpc("confirm_plan",{p_token:token});
+        if(done)return;
+        if(error){
+          // Funktion fehlt evtl. noch in der DB
+          if(/function|does not exist|schema cache|not find/i.test(error.message||""))setState("setup");
+          else setState("error");
+          return;}
+        setState("ok");
+      }catch(e){if(!done)setState("error");}
+    })();
+    return()=>{done=true;};
+  },[]);
+  const base=location.origin+location.pathname;
+  return(<div className="center-screen"><div className="auth-card" style={{textAlign:"center"}}>
+    <div className="brand" style={{justifyContent:"center",marginBottom:10}}>DRS Hailplanner <span className="ver-badge">{APP_VERSION}</span></div>
+    {state==="loading"&&<><div className="spin" style={{margin:"10px auto"}}></div><p className="muted">Bestätigung wird gespeichert…</p></>}
+    {state==="ok"&&<>
+      <div style={{fontSize:54,lineHeight:1,margin:"6px 0"}}>✅</div>
+      <h1 style={{margin:"6px 0"}}>Termin bestätigt</h1>
+      <p className="lead">Vielen Dank! Deine Einsätze wurden als bestätigt gemeldet. Du kannst diese Seite jetzt schließen.</p></>}
+    {state==="error"&&<>
+      <div style={{fontSize:54,lineHeight:1,margin:"6px 0"}}>⚠️</div>
+      <h1 style={{margin:"6px 0"}}>Bestätigung nicht möglich</h1>
+      <p className="lead">Der Link ist ungültig oder abgelaufen. Bitte wende dich an die Planung.</p></>}
+    {state==="setup"&&<>
+      <div style={{fontSize:44,lineHeight:1,margin:"6px 0"}}>🛠️</div>
+      <h1 style={{margin:"6px 0",fontSize:20}}>Einmalige Einrichtung nötig</h1>
+      <p className="lead">Die Bestätigungs-Funktion ist in der Datenbank noch nicht angelegt. Bitte einmalig das Datenbank-Update ausführen (Einstellungen → Datenbank-Update), danach funktioniert der Link.</p></>}
+    <a className="btn" style={{marginTop:10}} href={base}>Zur Anmeldung</a>
+  </div></div>);
 }
 
 function SetPassword({sb,onDone}){
@@ -1380,7 +1439,9 @@ function AssignModal({store,ctx,onClose}){
     if(await api.moveAssignment(ed.id,ctx.employeeId,newDate)){store.showToast("Verschoben auf "+fmtDE(newDate));onClose();}}
 
   const previewA={date:ctx.date,type:mode,projectNrs:selProjects,einsatz:eins,title,ort,note:deriveNoteText(notes),allDay,startTime,endTime,adresse:freeAddr,projektrolle};
-  const msg=buildMessage(emp,previewA,projects,appUrl);
+  const _cd=new Date(ctx.date+"T00:00:00");
+  const _mon=ymd(new Date(_cd.getFullYear(),_cd.getMonth(),_cd.getDate()-((_cd.getDay()+6)%7)));
+  const msg=buildMessage(emp,previewA,projects,appUrl)+`\n\n✅ Bitte bestätige deinen Termin mit einem Klick: ${confirmLink(ctx.employeeId,_mon,appUrl)}`;
   const subj=mode==="project"?("Einsatzplanung "+fmtDE(ctx.date)):("Termin "+fmtDE(ctx.date));
   const handTgt=employees.find(e=>e.id===handTo);
   const handMsg=handTgt?buildMessage(handTgt,previewA,projects,appUrl):"";
