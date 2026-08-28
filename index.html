@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.5.7";
+const APP_VERSION="v1.6.1";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -257,7 +257,7 @@ create table if not exists assignments (
   einsatz text, title text, ort text default 'inland',
   all_day boolean default true, start_time text, end_time text,
   adresse text, projektrolle text, privat boolean default false,
-  kontakt_name text, kontakt_tel text, kontakt_mail text,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
   note text default '', notes jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 
 create table if not exists settings (key text primary key, value jsonb);
@@ -269,7 +269,7 @@ create table if not exists tech_assignments (
   all_day boolean default true, start_time text, end_time text, dauer text default '',
   adresse text default '', versicherung text default '',
   vehicles jsonb default '[]'::jsonb, note text default '', notes jsonb default '[]'::jsonb,
-  kontakt_name text, kontakt_tel text, kontakt_mail text,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
   send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 
 create table if not exists app_users (
@@ -290,6 +290,10 @@ alter table settings enable row level security;
 alter table tech_assignments add column if not exists kontakt_name text;
 alter table tech_assignments add column if not exists kontakt_tel text;
 alter table tech_assignments add column if not exists kontakt_mail text;
+alter table assignments add column if not exists confirmed boolean default false;
+alter table assignments add column if not exists confirmed_at timestamptz;
+alter table tech_assignments add column if not exists confirmed boolean default false;
+alter table tech_assignments add column if not exists confirmed_at timestamptz;
 alter table tech_assignments enable row level security;
 alter table absences enable row level security;
 alter table app_users enable row level security;
@@ -331,6 +335,10 @@ alter table assignments add column if not exists kontakt_mail text;
 alter table tech_assignments add column if not exists kontakt_name text;
 alter table tech_assignments add column if not exists kontakt_tel text;
 alter table tech_assignments add column if not exists kontakt_mail text;
+alter table assignments add column if not exists confirmed boolean default false;
+alter table assignments add column if not exists confirmed_at timestamptz;
+alter table tech_assignments add column if not exists confirmed boolean default false;
+alter table tech_assignments add column if not exists confirmed_at timestamptz;
 -- Technikerplanung (Phase 2):
 create table if not exists tech_assignments (
   id uuid primary key default gen_random_uuid(),
@@ -339,7 +347,7 @@ create table if not exists tech_assignments (
   all_day boolean default true, start_time text, end_time text, dauer text default '',
   adresse text default '', versicherung text default '',
   vehicles jsonb default '[]'::jsonb, note text default '', notes jsonb default '[]'::jsonb,
-  kontakt_name text, kontakt_tel text, kontakt_mail text,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
   send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 alter table tech_assignments enable row level security;
 do $$ begin
@@ -491,21 +499,21 @@ const asgToDb=a=>({employee_id:a.employeeId,date:a.date,type:a.type,project_nr:n
   all_day:a.allDay!==false,start_time:a.allDay===false?(a.startTime||null):null,
   end_time:a.allDay===false?(a.endTime||null):null,note:deriveNoteText(a.notes)||a.note||"",notes:a.notes||[],created_by:a.createdBy||null,
   adresse:a.adresse||null,projektrolle:a.projektrolle||null,privat:!!a.privat,
-  kontakt_name:a.kontaktName||null,kontakt_tel:a.kontaktTel||null,kontakt_mail:a.kontaktMail||null});
+  kontakt_name:a.kontaktName||null,kontakt_tel:a.kontaktTel||null,kontakt_mail:a.kontaktMail||null,confirmed:!!a.confirmed,confirmed_at:a.confirmedAt||null});
 const asgFromDb=r=>({id:r.id,employeeId:r.employee_id,date:r.date,type:r.type,
   projectNrs:(r.project_nrs&&r.project_nrs.length)?r.project_nrs:(r.project_nr?[r.project_nr]:[]),
   einsatz:r.einsatz,title:r.title,ort:r.ort,allDay:r.all_day!==false,startTime:r.start_time,
   endTime:r.end_time,note:r.note,notes:r.notes||[],createdBy:r.created_by,createdAt:r.created_at,adresse:r.adresse||"",projektrolle:r.projektrolle||"",privat:!!r.privat,
-  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||""});
+  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||"",confirmed:!!r.confirmed,confirmedAt:r.confirmed_at});
 const techToDb=t=>({employee_id:t.employeeId,project_nr:t.projectNr||null,autohaus:t.autohaus||"",date:t.date,
   all_day:t.allDay!==false,start_time:t.allDay===false?(t.startTime||null):null,end_time:t.allDay===false?(t.endTime||null):null,
   dauer:t.dauer||"",adresse:t.adresse||"",versicherung:t.versicherung||"",vehicles:t.vehicles||[],
   note:deriveNoteText(t.notes)||t.note||"",notes:t.notes||[],send_log:t.sendLog||[],created_by:t.createdBy||null,
-  kontakt_name:t.kontaktName||null,kontakt_tel:t.kontaktTel||null,kontakt_mail:t.kontaktMail||null});
+  kontakt_name:t.kontaktName||null,kontakt_tel:t.kontaktTel||null,kontakt_mail:t.kontaktMail||null,confirmed:!!t.confirmed,confirmed_at:t.confirmedAt||null});
 const techFromDb=r=>({id:r.id,employeeId:r.employee_id,projectNr:r.project_nr||"",autohaus:r.autohaus||"",date:r.date,
   allDay:r.all_day!==false,startTime:r.start_time,endTime:r.end_time,dauer:r.dauer||"",adresse:r.adresse||"",
   versicherung:r.versicherung||"",vehicles:r.vehicles||[],note:r.note||"",notes:r.notes||[],sendLog:r.send_log||[],createdBy:r.created_by,createdAt:r.created_at,
-  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||""});
+  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||"",confirmed:!!r.confirmed,confirmedAt:r.confirmed_at});
 const awSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
 const awDoneSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.awDone)||0),0);
 const userFromDb=r=>({email:r.email,name:r.name||"",rolle:r.rolle||"Betrachter",permissions:r.permissions||{},employeeId:r.employee_id||"",active:r.active!==false});
@@ -783,6 +791,7 @@ function App({sb,session}){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
       if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");logChange("Termin geändert",rec.date);return true;},
     async deleteAssignment(id){const{error}=await sb.from("assignments").delete().eq("id",id);if(error)return fail(error);setAssignments(as=>as.filter(a=>a.id!==id));showToast("Einsatz gelöscht");logChange("Termin gelöscht","");return true;},
+    async deleteAssignmentsMany(ids){const{error}=await sb.from("assignments").delete().in("id",ids);if(error)return fail(error);setAssignments(as=>as.filter(a=>!ids.includes(a.id)));showToast(ids.length+" Termine gelöscht");logChange("Termine gelöscht (Block)",ids.length+" Einträge");return true;},
     async moveAssignment(id,employeeId,date){const{error}=await sb.from("assignments").update({employee_id:employeeId,date}).eq("id",id);
       if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===id?{...a,employeeId,date}:a));return true;},
     async handOver(id,newEmpId,name){const{error}=await sb.from("assignments").update({employee_id:newEmpId}).eq("id",id);
@@ -816,6 +825,13 @@ function App({sb,session}){
       const{error}=await sb.from("tech_assignments").update(techToDb(rec)).eq("id",rec.id);
       if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===rec.id?rec:t));showToast("Technikertermin aktualisiert");return true;},
     async deleteTech(id){const{error}=await sb.from("tech_assignments").delete().eq("id",id);if(error)return fail(error);setTechAssignments(ts=>ts.filter(t=>t.id!==id));showToast("Technikertermin gelöscht");return true;},
+    async deleteTechMany(ids){const{error}=await sb.from("tech_assignments").delete().in("id",ids);if(error)return fail(error);setTechAssignments(ts=>ts.filter(t=>!ids.includes(t.id)));showToast(ids.length+" Technikertermine gelöscht");return true;},
+    async confirmWeek(empId,mondayYmd){const lo=mondayYmd,hi=addDaysYMD(mondayYmd,6);const nowIso=new Date().toISOString();
+      const r1=await sb.from("assignments").update({confirmed:true,confirmed_at:nowIso}).eq("employee_id",empId).gte("date",lo).lte("date",hi);
+      const r2=await sb.from("tech_assignments").update({confirmed:true,confirmed_at:nowIso}).eq("employee_id",empId).gte("date",lo).lte("date",hi);
+      setAssignments(as=>as.map(a=>(a.employeeId===empId&&a.date>=lo&&a.date<=hi)?{...a,confirmed:true,confirmedAt:nowIso}:a));
+      setTechAssignments(ts=>ts.map(t=>(t.employeeId===empId&&t.date>=lo&&t.date<=hi)?{...t,confirmed:true,confirmedAt:nowIso}:t));
+      if(r1.error||r2.error)return fail(r1.error||r2.error);logChange("Termine bestätigt","MA "+empId+" KW ab "+lo);return true;},
     async moveTech(id,employeeId,date){const{error}=await sb.from("tech_assignments").update({employee_id:employeeId,date}).eq("id",id);
       if(error)return fail(error);setTechAssignments(ts=>ts.map(t=>t.id===id?{...t,employeeId,date}:t));return true;},
     async logTechSend(id,channel){
@@ -854,6 +870,14 @@ function App({sb,session}){
     ["set","Einstellungen",ICONS.set,can("vers_edit")]].filter(x=>x[3]);
   const allowedTabs=NAV.map(x=>x[0]);
   const activeTab=allowedTabs.includes(tab)?tab:"dash";
+  const confirmToken=new URLSearchParams(window.location.search).get("bestaetigen")||"";
+  useEffect(()=>{
+    if(confirmToken&&!loading&&!loadErr){
+      const i=confirmToken.indexOf("~");const eid=i>=0?confirmToken.slice(0,i):"";const mon=i>=0?confirmToken.slice(i+1):"";
+      if(eid&&mon){api.confirmWeek(eid,mon).then(ok=>{showToast(ok?"✓ Termine bestätigt – vielen Dank!":"Bestätigung nicht möglich");
+        try{history.replaceState(null,"",location.origin+location.pathname);}catch(e){}});}
+    }
+  },[confirmToken,loading,loadErr]);
   // „Nur eigene": Mitarbeiter/Techniker mit Recht eigene Termine, aber ohne fremde → dürfen NUR den eigenen Plan sehen
   const selfOnly=!isBootstrap&&can("term_own")&&!can("term_others");
   const maParam=new URLSearchParams(window.location.search).get("ma")||"";
@@ -919,6 +943,10 @@ function personalLink(empId,appUrl){
   let base=(appUrl&&String(appUrl).trim())?String(appUrl).trim():(location.origin+location.pathname);
   base=base.split("#")[0];const sep=base.includes("?")?"&":"?";
   return base+sep+"ma="+encodeURIComponent(empId);}
+function confirmLink(empId,mondayYmd,appUrl){
+  let base=(appUrl&&String(appUrl).trim())?String(appUrl).trim():(location.origin+location.pathname);
+  base=base.split("#")[0];const sep=base.includes("?")?"&":"?";
+  return base+sep+"bestaetigen="+encodeURIComponent(empId)+"~"+mondayYmd;}
 function isPrivateHidden(a,isAdmin){return a&&a.type==="frei"&&a.privat&&!isAdmin;}
 function collectDayStops(empId,date,assignments,techAssignments,projects){
   const items=[];
@@ -1002,19 +1030,31 @@ function fmtTs(ts){if(!ts)return"";const d=new Date(ts);if(isNaN(d))return"";
 function NotesEditor({notes,setNotes,store,label}){
   const seeIntern=canSeeIntern(store);
   const[txt,setTxt]=useState("");const[intern,setIntern]=useState(false);
+  const[editId,setEditId]=useState("");const[editTxt,setEditTxt]=useState("");
   const visible=(notes||[]).filter(n=>!n.intern||seeIntern);
   function add(){if(!txt.trim())return;
     setNotes([...(notes||[]),{id:uid(),text:txt.trim(),intern:seeIntern?intern:false,by:store.myEmail||"",ts:new Date().toISOString()}]);
     setTxt("");setIntern(false);}
+  function saveEdit(){setNotes((notes||[]).map(n=>n.id===editId?{...n,text:editTxt.trim(),edited:true,editedTs:new Date().toISOString()}:n));setEditId("");setEditTxt("");}
+  function del(n){if(!confirm("Diese Bemerkung wirklich löschen?"))return;setNotes((notes||[]).filter(x=>x.id!==n.id));if(editId===n.id)setEditId("");}
   return(<div className="field">
     <label>{label||"Bemerkungen"}</label>
     {visible.length>0&&<div className="diffcol" style={{marginBottom:8}}>
       {visible.slice().reverse().map(n=>(<div key={n.id} className="rec-row" style={{alignItems:"flex-start",flexDirection:"column",gap:2}}>
-        <div className="flex" style={{gap:8,width:"100%"}}>
-          <span style={{whiteSpace:"pre-wrap",flex:1}}>{n.text}</span>
-          {n.intern&&<span className="badge b-red" title="Nur für Super-Admin, Admin, Disponent sichtbar">🔒 Intern</span>}
-        </div>
-        <span className="mini muted">{shortCreator(n.by)||"–"}{n.ts?" · "+fmtTs(n.ts):""}</span>
+        {editId===n.id?<div style={{width:"100%"}}>
+          <textarea value={editTxt} onChange={e=>setEditTxt(e.target.value)} style={{width:"100%"}}/>
+          <div className="flex" style={{gap:6,marginTop:4}}>
+            <button type="button" className="btn primary sm" onClick={saveEdit} disabled={!editTxt.trim()}>Speichern</button>
+            <button type="button" className="btn sm" onClick={()=>{setEditId("");setEditTxt("");}}>Abbrechen</button></div>
+        </div>:<>
+          <div className="flex" style={{gap:8,width:"100%"}}>
+            <span style={{whiteSpace:"pre-wrap",flex:1}}>{n.text}</span>
+            {n.intern&&<span className="badge b-red" title="Nur für Super-Admin, Admin, Disponent sichtbar">🔒 Intern</span>}
+            <button type="button" className="btn ghost sm" title="Bemerkung bearbeiten" onClick={()=>{setEditId(n.id);setEditTxt(n.text);}}><Ic d={ICONS.edit}/></button>
+            <button type="button" className="btn ghost sm" title="Bemerkung löschen" onClick={()=>del(n)}><Ic d={ICONS.trash}/></button>
+          </div>
+          <span className="mini muted">{shortCreator(n.by)||"–"}{n.ts?" · "+fmtTs(n.ts):""}{n.edited?" · bearbeitet":""}</span>
+        </>}
       </div>))}</div>}
     {visible.length===0&&<div className="muted mini" style={{marginBottom:8}}>Noch keine Bemerkungen.</div>}
     <div className="flex" style={{gap:8,alignItems:"flex-start"}}>
@@ -1099,6 +1139,7 @@ function Dashboard({store,go}){
                   <span>{DAYNAMES[(dd.getDay()+6)%7]}, {fmtDE(d.date)}</span>{d.date===todayYMD&&<span className="badge b-blue">Heute</span>}</div>
                 {d.items.map(a=>{const e=empById(a.employeeId);const hidden=isPrivateHidden(a,isAdmin);const ps=hidden?[]:assignmentProjects(a,projects);
                   return(<div key={a.id} className="flex" style={{padding:"4px 0",fontSize:13}}>
+                    {a.confirmed&&<span title="bestätigt" style={{color:"#16a34a",fontWeight:800}}>✓</span>}
                     <span style={{fontWeight:600,minWidth:130}}>{e?e.name:"?"}</span>
                     <span className="muted">{hidden?"🔒 Geblockt":(a.type==="frei"?("🕓 "+(a.title||"Freier Termin")):(ps.map(p=>projLabel(p)).join(", ")||"—"))}</span>
                     {timeLabel(a)&&<span className="badge b-gray">{timeLabel(a)}</span>}
@@ -1202,6 +1243,7 @@ function Wochenplanung({store,soloEmp}){
                 title={more>0?items.length+" Termine – klicken zum Aufklappen":"Klicken für Details / Route"}
                 onClick={e=>{e.stopPropagation();setDayPop({employeeId:emp.id,date});}}>
                 <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                  {a0.confirmed&&<span title="Vom Mitarbeiter bestätigt" style={{color:"#16a34a",fontWeight:800}}>✓</span>}
                   {!hidden0&&a0.ort==="ausland"&&<span className="ausland" title="Ausland">✈</span>}
                   {hidden0&&<span className="ausland" title="privat">🔒</span>}
                   <span className="cn" style={{flex:1,minWidth:0}}>{label0}</span>
@@ -1266,7 +1308,7 @@ function DayPopup({store,ctx,onEdit,onAdd,onClose}){
   </Modal>);
 }
 function AssignModal({store,ctx,onClose}){
-  const{projects,employees,einsatz,absences,api,appUrl,canTermFor}=store;
+  const{projects,employees,einsatz,absences,assignments,api,appUrl,canTermFor}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
   const[mode,setMode]=useState(ed?ed.type:"project");
   const[selProjects,setSelProjects]=useState(ed?.projectNrs||[]);
@@ -1315,7 +1357,7 @@ function AssignModal({store,ctx,onClose}){
       }
     }
     if(ed){
-      const ok=await api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy});
+      const ok=await api.updateAssignment({...base,id:ed.id,date:ctx.date,createdBy:ed.createdBy,confirmed:ed.confirmed,confirmedAt:ed.confirmedAt});
       if(!ok)return;
       const extra=dates.filter(d=>d!==ctx.date);
       if(extra.length)await api.addAssignments(extra.map(d=>({...base,date:d})));
@@ -1324,7 +1366,14 @@ function AssignModal({store,ctx,onClose}){
       if(await api.addAssignments(dates.map(d=>({...base,date:d}))))onClose();
     }
   }
-  async function del(){if(await api.deleteAssignment(ed.id))onClose();}
+  async function del(){if(!confirm("Diesen Termin wirklich löschen?"))return;if(await api.deleteAssignment(ed.id))onClose();}
+  function sameKind(a){return a.employeeId===ctx.employeeId&&a.type===mode&&(mode==="frei"?((a.title||"")===(ed?.title||title||"")):((a.projectNrs||[]).slice().sort().join(",")===selProjects.slice().sort().join(",")));}
+  async function delBlock(){
+    const lo=fromDate>toDate?toDate:fromDate,hi=fromDate>toDate?fromDate:toDate;
+    const ids=assignments.filter(a=>a.date>=lo&&a.date<=hi&&sameKind(a)).map(a=>a.id);
+    if(!ids.length){store.showToast("Keine passenden Termine im Zeitraum");return;}
+    if(!confirm(ids.length+" Termin(e) im Zeitraum "+fmtDE(lo)+" – "+fmtDE(hi)+" wirklich löschen?"))return;
+    if(await api.deleteAssignmentsMany(ids))onClose();}
   async function doHandover(){if(!handTo)return;const tgt=employees.find(e=>e.id===handTo);
     if(await api.handOver(ed.id,handTo,tgt?.name||""))onClose();}
   async function doMove(newDate){if(!newDate||newDate===ctx.date)return;
@@ -1444,6 +1493,15 @@ function AssignModal({store,ctx,onClose}){
         <span className="mini muted">Am Handy praktisch statt Ziehen. Für einen anderen Mitarbeiter siehe „Übergeben".</span></div>
     </div>}
 
+    {ed&&mayEdit&&<div className="notify-box" style={{marginTop:12,borderColor:"#fecaca"}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>🗑 Ganzen Zeitraum löschen</div>
+      <div className="mini muted" style={{marginBottom:8}}>Löscht alle gleichartigen Termine dieser Person im Zeitraum (z. B. ein ganzer Block Mo–Fr), ohne jeden Tag einzeln öffnen zu müssen.</div>
+      <div className="flex wrap" style={{gap:8,alignItems:"center"}}>
+        <span className="mini">von</span><input type="date" value={fromDate} onChange={e=>{setFromDate(e.target.value);if(e.target.value>toDate)setToDate(e.target.value);}} style={{maxWidth:170}}/>
+        <span className="mini">bis</span><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={{maxWidth:170}}/>
+        <button className="btn danger sm" onClick={delBlock}><Ic d={ICONS.trash}/> Zeitraum löschen</button></div>
+    </div>}
+
     {ed&&mayEdit&&<div className="notify-box" style={{marginTop:12}}>
       <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}><Ic d={ICONS.swap} style={{width:14,height:14,verticalAlign:"-2px"}}/> Termin an Kollegen übergeben</div>
       <div className="flex wrap">
@@ -1480,6 +1538,7 @@ function SendModal({store,onClose}){
       const stops=collectDayStops(e.id,d,assignments,techAssignments,projects);const url=dayRouteUrl(stops,e.adresse);
       if(url)t+=`\n    🧭 Tagesroute: ${url}`;});
     t+=`\n\nDein persönlicher Plan (Termine ansehen, Route & Kalender): ${personalLink(e.id,appUrl)}`;
+    t+=`\n\n✅ Bitte bestätige deinen Plan mit einem Klick: ${confirmLink(e.id,ymd(days[0]),appUrl)}`;
     return t;}
   return(<Modal title={"Einsatzpläne senden · nächste Woche (KW "+wk+")"} onClose={onClose} wide
     footer={<button className="btn" onClick={onClose}>Schließen</button>}>
@@ -1595,6 +1654,7 @@ function Technikerplanung({store,soloEmp}){
                 style={{borderLeftColor:col}} title={more>0?items.length+" Technikertermine – klicken zum Aufklappen":label}
                 onClick={e=>{e.stopPropagation();setTechPop({employeeId:emp.id,date});}}>
                 <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                  {t0.confirmed&&<span title="Vom Techniker bestätigt" style={{color:"#16a34a",fontWeight:800}}>✓</span>}
                   <span className="cn" style={{flex:1,minWidth:0}}>{label}</span>
                   {more>0&&<span className="badge b-gray" style={{flexShrink:0,padding:"0 6px",fontSize:10}}>+{more}</span>}</div>
                 <span className="cs">{[timeLabel(t0),veh.length?veh.length+" Fzg":"",aw?fmtAW(aw)+" AW":""].filter(Boolean).join(" · ")}</span>
@@ -1654,7 +1714,7 @@ function TechDayPopup({store,ctx,onEdit,onAdd,onClose}){
   </Modal>);
 }
 function TechModal({store,ctx,onClose}){
-  const{projects,employees,versicherungen,absences,assignments,api,appUrl,myEmail}=store;
+  const{projects,employees,versicherungen,absences,assignments,techAssignments,api,appUrl,myEmail}=store;
   const ed=ctx.editing;const emp=employees.find(e=>e.id===ctx.employeeId);
   const activeProjects=projects.filter(p=>p.status!=="Beendet");
   const[mode,setMode]=useState("tech");
@@ -1710,14 +1770,22 @@ function TechModal({store,ctx,onClose}){
       (pickedProject.kontaktName!==kontaktName.trim()||pickedProject.kontaktTel!==kontaktTel.trim()||pickedProject.kontaktMail!==kontaktMail.trim())){
       api.saveProject({...pickedProject,kontaktName:kontaktName.trim(),kontaktTel:kontaktTel.trim(),kontaktMail:kontaktMail.trim()},false);
     }
-    if(ed){const ok=await api.updateTech({...base,id:ed.id,date:lo,createdBy:ed.createdBy,sendLog:ed.sendLog});if(!ok)return;
+    if(ed){const ok=await api.updateTech({...base,id:ed.id,date:lo,createdBy:ed.createdBy,sendLog:ed.sendLog,confirmed:ed.confirmed,confirmedAt:ed.confirmedAt});if(!ok)return;
       const extra=datesBetween(lo,hi).filter(d=>d!==lo);
       if(extra.length)await api.addTech(extra.map(d=>({...base,date:d})));onClose();}
     else{const dates=datesBetween(lo,hi);if(await api.addTech(dates.map(d=>({...base,date:d}))))onClose();}
   }
-  async function del(){if(await api.deleteTech(ed.id))onClose();}
+  async function del(){if(!confirm("Diesen Technikertermin wirklich löschen?"))return;if(await api.deleteTech(ed.id))onClose();}
+  async function delBlock(){
+    const lo=fromDate>toDate?toDate:fromDate,hi=fromDate>toDate?fromDate:toDate;
+    const ids=techAssignments.filter(t=>t.employeeId===ctx.employeeId&&t.date>=lo&&t.date<=hi&&t.projectNr===projectNr).map(t=>t.id);
+    if(!ids.length){store.showToast("Keine passenden Termine im Zeitraum");return;}
+    if(!confirm(ids.length+" Technikertermin(e) im Zeitraum "+fmtDE(lo)+" – "+fmtDE(hi)+" wirklich löschen?"))return;
+    if(await api.deleteTechMany(ids))onClose();}
 
-  const sendMsg=buildTechMessage(emp,{...base,date:ctx.date},project,appUrl);
+  const _cd=(()=>{const[Y,M,D]=ctx.date.split("-").map(Number);return new Date(Y,M-1,D);})();
+  const _mon=ymd(mondayOfWeek(isoYear(_cd),isoWeek(_cd)));
+  const sendMsg=buildTechMessage(emp,{...base,date:ctx.date},project,appUrl)+`\n\n✅ Bitte bestätige deinen Termin mit einem Klick: ${confirmLink(ctx.employeeId,_mon,appUrl)}`;
   const subj="Einsatzplanung "+(autohaus||project?.name||"")+" "+fmtDE(ctx.date);
   const hasPhone=!!(emp?.phone||"").replace(/[^0-9]/g,"");
   function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
@@ -1802,6 +1870,10 @@ function TechModal({store,ctx,onClose}){
     <div className="row2"><div className="field"><label>Von (Datum){ed?" – verschiebt den Termin":""}</label>
         <input type="date" value={fromDate} onChange={e=>{setFromDate(e.target.value);if(e.target.value>toDate)setToDate(e.target.value);}}/></div>
       <div className="field"><label>Bis (optional, mehrere Tage – z. B. Mo–Mi)</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)}/></div></div>
+    {ed&&<div className="notify-box" style={{marginBottom:14,borderColor:"#fecaca"}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>🗑 Ganzen Zeitraum löschen</div>
+      <div className="mini muted" style={{marginBottom:8}}>Löscht alle Technikertermine dieser Person zum selben Projekt im oben gewählten Zeitraum (von–bis) auf einmal.</div>
+      <button className="btn danger sm" onClick={delBlock}><Ic d={ICONS.trash}/> Zeitraum {fmtDE(fromDate<toDate?fromDate:toDate)} – {fmtDE(fromDate<toDate?toDate:fromDate)} löschen</button></div>}
     <div className="row2">
       <div className="field"><label>Zeit</label>
         <div className="pill-tabs" style={{marginBottom:allDay?0:8}}>
@@ -2471,6 +2543,7 @@ function RolePlanungEditor({roles,employees,rolePlanung,api,showToast}){
     api.setSetting("roles",[...(roles||[]),v]);setNw("");showToast("Rolle „"+v+"\" angelegt");}
   function delRole(r){const cnt=employees.filter(e=>e.role===r).length;
     if(cnt>0){if(!confirm("Der Rolle „"+r+"\" sind noch "+cnt+" Mitarbeiter zugeordnet. Rolle trotzdem aus der Liste entfernen? (Die Mitarbeiter behalten den Text, bis du sie umstellst.)"))return;}
+    else{if(!confirm("Rolle „"+r+"\" wirklich löschen?"))return;}
     api.setSetting("roles",(roles||[]).filter(x=>x!==r));showToast("Rolle entfernt");}
   return(<div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Rollen &amp; Planzuordnung</h3></div><div className="card-b">
     <p className="muted mini" style={{marginTop:0}}>Lege Rollen an (z. B. Junior Projektleiter, Projektleiter, Techniker, Monteur) und bestimme je Rolle, in welchem Planer die Personen erscheinen – z. B. Techniker/Monteur in der Technikerplanung, Projektleiter in der Wochenplanung. Eine Rolle darf auch in beiden erscheinen.</p>
