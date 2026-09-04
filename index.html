@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.2";
+const APP_VERSION="v1.6.3";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -257,7 +257,7 @@ create table if not exists assignments (
   einsatz text, title text, ort text default 'inland',
   all_day boolean default true, start_time text, end_time text,
   adresse text, projektrolle text, privat boolean default false,
-  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, drs_name text, drs_tel text, drs_mail text, confirmed boolean default false, confirmed_at timestamptz,
   note text default '', notes jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 
 create table if not exists settings (key text primary key, value jsonb);
@@ -269,7 +269,7 @@ create table if not exists tech_assignments (
   all_day boolean default true, start_time text, end_time text, dauer text default '',
   adresse text default '', versicherung text default '',
   vehicles jsonb default '[]'::jsonb, note text default '', notes jsonb default '[]'::jsonb,
-  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, drs_name text, drs_tel text, drs_mail text, confirmed boolean default false, confirmed_at timestamptz,
   send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 
 create table if not exists app_users (
@@ -288,6 +288,9 @@ alter table projects enable row level security;
 alter table assignments enable row level security;
 alter table settings enable row level security;
 alter table tech_assignments add column if not exists kontakt_name text;
+alter table tech_assignments add column if not exists drs_name text;
+alter table tech_assignments add column if not exists drs_tel text;
+alter table tech_assignments add column if not exists drs_mail text;
 alter table tech_assignments add column if not exists kontakt_tel text;
 alter table tech_assignments add column if not exists kontakt_mail text;
 alter table assignments add column if not exists confirmed boolean default false;
@@ -333,6 +336,9 @@ alter table assignments add column if not exists kontakt_name text;
 alter table assignments add column if not exists kontakt_tel text;
 alter table assignments add column if not exists kontakt_mail text;
 alter table tech_assignments add column if not exists kontakt_name text;
+alter table tech_assignments add column if not exists drs_name text;
+alter table tech_assignments add column if not exists drs_tel text;
+alter table tech_assignments add column if not exists drs_mail text;
 alter table tech_assignments add column if not exists kontakt_tel text;
 alter table tech_assignments add column if not exists kontakt_mail text;
 alter table assignments add column if not exists confirmed boolean default false;
@@ -347,7 +353,7 @@ create table if not exists tech_assignments (
   all_day boolean default true, start_time text, end_time text, dauer text default '',
   adresse text default '', versicherung text default '',
   vehicles jsonb default '[]'::jsonb, note text default '', notes jsonb default '[]'::jsonb,
-  kontakt_name text, kontakt_tel text, kontakt_mail text, confirmed boolean default false, confirmed_at timestamptz,
+  kontakt_name text, kontakt_tel text, kontakt_mail text, drs_name text, drs_tel text, drs_mail text, confirmed boolean default false, confirmed_at timestamptz,
   send_log jsonb default '[]'::jsonb, created_by text, created_at timestamptz default now());
 alter table tech_assignments enable row level security;
 do $$ begin
@@ -529,11 +535,13 @@ const techToDb=t=>({employee_id:t.employeeId,project_nr:t.projectNr||null,autoha
   all_day:t.allDay!==false,start_time:t.allDay===false?(t.startTime||null):null,end_time:t.allDay===false?(t.endTime||null):null,
   dauer:t.dauer||"",adresse:t.adresse||"",versicherung:t.versicherung||"",vehicles:t.vehicles||[],
   note:deriveNoteText(t.notes)||t.note||"",notes:t.notes||[],send_log:t.sendLog||[],created_by:t.createdBy||null,
-  kontakt_name:t.kontaktName||null,kontakt_tel:t.kontaktTel||null,kontakt_mail:t.kontaktMail||null,confirmed:!!t.confirmed,confirmed_at:t.confirmedAt||null});
+  kontakt_name:t.kontaktName||null,kontakt_tel:t.kontaktTel||null,kontakt_mail:t.kontaktMail||null,
+  drs_name:t.drsName||null,drs_tel:t.drsTel||null,drs_mail:t.drsMail||null,confirmed:!!t.confirmed,confirmed_at:t.confirmedAt||null});
 const techFromDb=r=>({id:r.id,employeeId:r.employee_id,projectNr:r.project_nr||"",autohaus:r.autohaus||"",date:r.date,
   allDay:r.all_day!==false,startTime:r.start_time,endTime:r.end_time,dauer:r.dauer||"",adresse:r.adresse||"",
   versicherung:r.versicherung||"",vehicles:r.vehicles||[],note:r.note||"",notes:r.notes||[],sendLog:r.send_log||[],createdBy:r.created_by,createdAt:r.created_at,
-  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||"",confirmed:!!r.confirmed,confirmedAt:r.confirmed_at});
+  kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||"",
+  drsName:r.drs_name||"",drsTel:r.drs_tel||"",drsMail:r.drs_mail||"",confirmed:!!r.confirmed,confirmedAt:r.confirmed_at});
 const awSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
 const awDoneSum=t=>(t.vehicles||[]).reduce((s,v)=>s+(parseFloat(v.awDone)||0),0);
 const userFromDb=r=>({email:r.email,name:r.name||"",rolle:r.rolle||"Betrachter",permissions:r.permissions||{},employeeId:r.employee_id||"",active:r.active!==false});
@@ -1788,6 +1796,9 @@ function TechModal({store,ctx,onClose}){
   const[kontaktName,setKontaktName]=useState(ed?.kontaktName||"");
   const[kontaktTel,setKontaktTel]=useState(ed?.kontaktTel||"");
   const[kontaktMail,setKontaktMail]=useState(ed?.kontaktMail||"");
+  const[drsName,setDrsName]=useState(ed?.drsName||"");
+  const[drsTel,setDrsTel]=useState(ed?.drsTel||"");
+  const[drsMail,setDrsMail]=useState(ed?.drsMail||"");
   const[notes,setNotes]=useState(seedNotes(ed));
   const[fromDate,setFromDate]=useState(ctx.date);const[toDate,setToDate]=useState(ctx.date);
   const[allDay,setAllDay]=useState(ed?ed.allDay!==false:false);
@@ -1809,6 +1820,7 @@ function TechModal({store,ctx,onClose}){
   const base={employeeId:ctx.employeeId,projectNr,autohaus:autohaus.trim(),adresse:adresse.trim(),versicherung,dauer:dauer.trim(),
     notes,note:deriveNoteText(notes),allDay,startTime:allDay?null:startTime,endTime:allDay?null:endTime,
     kontaktName:kontaktName.trim(),kontaktTel:kontaktTel.trim(),kontaktMail:kontaktMail.trim(),
+    drsName:drsName.trim(),drsTel:drsTel.trim(),drsMail:drsMail.trim(),
     vehicles:cleanVehicles.map(v=>({kennzeichen:(v.kennzeichen||"").trim(),vin:(v.vin||"").trim(),aw:v.aw===""?"":Number(v.aw),awDone:v.awDone===""?"":Number(v.awDone)}))};
   const project=projects.find(p=>p.nr===projectNr);
   const totalAW=base.vehicles.reduce((s,v)=>s+(parseFloat(v.aw)||0),0);
@@ -1857,6 +1869,7 @@ function TechModal({store,ctx,onClose}){
   const plName=(plRole&&plRole.name)||(pickedProject&&(pickedProject.leiter||[])[0])||"";
   const plEmp=plName?employees.find(e=>e.name===plName):null;
   const plPhone=plEmp?plEmp.phone:"";
+  const plMail=plEmp?(plEmp.email||""):"";
   const plOrt=(pickedProject&&pickedProject.adresse)||adresse||"";
   const plMsg=pickedProject?`Projekt (${pickedProject.nr}) ${pickedProject.name}${plOrt?" und "+plOrt:""}: Ich (${emp?.name||""}) habe eine Frage: `:"";
 
@@ -1899,11 +1912,17 @@ function TechModal({store,ctx,onClose}){
           vehicles.filter(v=>v.kennzeichen||v.vin).map((v,i)=>(<div key={i} className="rec-row"><span style={{fontWeight:600}}>{v.kennzeichen||"—"}</span>{v.vin&&<span className="mini muted">{v.vin}</span>}<span className="spacer"></span>{v.aw!==""&&v.aw!=null&&<span className="badge b-gray">{fmtAW(Number(v.aw))} AW</span>}</div>))}</div>
       {deriveNoteText(notes)&&<div className="field"><label>Bemerkungen</label><div className="ro-val" style={{whiteSpace:"pre-wrap"}}>{deriveNoteText(notes)}</div></div>}
       {(kontaktName||kontaktTel||kontaktMail)&&<div className="notify-box" style={{marginBottom:14}}>
-        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Ansprechpartner vor Ort</div>
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Ansprechpartner vor Ort (Autohaus)</div>
         <div className="ro-val">{kontaktName||"—"}</div>
         <div className="flex wrap" style={{gap:8,marginTop:6}}>
           {kontaktTel.trim()&&<a className="btn ghost sm" href={"tel:"+kontaktTel.replace(/[^0-9+]/g,"")}>📞 {kontaktTel}</a>}
           {kontaktMail.trim()&&<a className="btn ghost sm" href={"mailto:"+kontaktMail.trim()}>✉️ {kontaktMail}</a>}</div></div>}
+      {(drsName||drsTel||drsMail)&&<div className="notify-box" style={{marginBottom:14}}>
+        <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Ansprechpartner DRS (Projektleiter)</div>
+        <div className="ro-val">{drsName||"—"}</div>
+        <div className="flex wrap" style={{gap:8,marginTop:6}}>
+          {drsTel.trim()&&<a className="btn ghost sm" href={"tel:"+drsTel.replace(/[^0-9+]/g,"")}>📞 {drsTel}</a>}
+          {drsMail.trim()&&<a className="btn ghost sm" href={"mailto:"+drsMail.trim()}>✉️ {drsMail}</a>}</div></div>}
       <div className="notify-box">
         <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>In Kalender speichern</div>
         <button className="btn sm" onClick={()=>downloadICS({title:"Technikereinsatz "+(autohaus||project?.name||""),date:ctx.date,allDay,startTime,endTime,
@@ -1958,19 +1977,33 @@ function TechModal({store,ctx,onClose}){
 
     <div className="notify-box" style={{marginBottom:14}}>
       <div className="flex" style={{marginBottom:8}}>
-        <div style={{fontWeight:600,fontSize:12.5}}>Ansprechpartner vor Ort (optional)</div>
+        <div style={{fontWeight:600,fontSize:12.5}}>Ansprechpartner vor Ort (Autohaus)</div>
         <span className="spacer"></span>
-        {pickedProject&&(pickedProject.kontaktName||pickedProject.kontaktTel||pickedProject.kontaktMail)&&
-          <button type="button" className="btn ghost sm" onClick={()=>{setKontaktName(pickedProject.kontaktName||"");setKontaktTel(pickedProject.kontaktTel||"");setKontaktMail(pickedProject.kontaktMail||"");}}>Aus Projekt übernehmen</button>}
+        {(()=>{const p=projects.find(x=>x.nr===projectNr);
+          return p&&(p.kontaktName||p.kontaktTel||p.kontaktMail)?<button type="button" className="btn ghost sm" onClick={()=>{setKontaktName(p.kontaktName||"");setKontaktTel(p.kontaktTel||"");setKontaktMail(p.kontaktMail||"");}}>Aus Projekt übernehmen</button>:null;})()}
       </div>
       <div className="row3">
-        <div className="field"><label>Name</label><input value={kontaktName} onChange={e=>setKontaktName(e.target.value)} placeholder="Vor- und Nachname"/></div>
+        <div className="field"><label>Name</label><input value={kontaktName} onChange={e=>setKontaktName(e.target.value)} placeholder="Ansprechpartner Autohaus"/></div>
         <div className="field"><label>Telefon</label><input type="tel" value={kontaktTel} onChange={e=>setKontaktTel(e.target.value)} placeholder="z. B. 0170 1234567"/></div>
-        <div className="field"><label>E-Mail</label><input type="email" value={kontaktMail} onChange={e=>setKontaktMail(e.target.value)} placeholder="name@firma.de"/></div></div>
+        <div className="field"><label>E-Mail</label><input type="email" value={kontaktMail} onChange={e=>setKontaktMail(e.target.value)} placeholder="name@autohaus.de"/></div></div>
       {(kontaktTel.trim()||kontaktMail.trim())&&<div className="flex wrap" style={{gap:8,marginTop:2}}>
         {kontaktTel.trim()&&<a className="btn ghost sm" href={"tel:"+kontaktTel.replace(/[^0-9+]/g,"")}>📞 Anrufen</a>}
         {kontaktMail.trim()&&<a className="btn ghost sm" href={"mailto:"+kontaktMail.trim()}>✉️ E-Mail</a>}</div>}
       {pickedProject&&<div className="mini muted" style={{marginTop:6}}>Wird beim Speichern automatisch mit dem Projekt synchronisiert.</div>}</div>
+
+    <div className="notify-box" style={{marginBottom:14}}>
+      <div className="flex" style={{marginBottom:8}}>
+        <div style={{fontWeight:600,fontSize:12.5}}>Ansprechpartner DRS (Projektleiter)</div>
+        <span className="spacer"></span>
+        {plName&&<button type="button" className="btn ghost sm" onClick={()=>{setDrsName(plName);setDrsTel(plPhone||"");setDrsMail(plMail||"");}}>Projektleiter übernehmen{plName?" ("+shortName(plName)+")":""}</button>}
+      </div>
+      <div className="row3">
+        <div className="field"><label>Name</label><input value={drsName} onChange={e=>setDrsName(e.target.value)} placeholder="Projektleiter DRS"/></div>
+        <div className="field"><label>Telefon</label><input type="tel" value={drsTel} onChange={e=>setDrsTel(e.target.value)} placeholder="z. B. 0170 1234567"/></div>
+        <div className="field"><label>E-Mail</label><input type="email" value={drsMail} onChange={e=>setDrsMail(e.target.value)} placeholder="name@drs-group.com"/></div></div>
+      {(drsTel.trim()||drsMail.trim())&&<div className="flex wrap" style={{gap:8,marginTop:2}}>
+        {drsTel.trim()&&<a className="btn ghost sm" href={"tel:"+drsTel.replace(/[^0-9+]/g,"")}>📞 Anrufen</a>}
+        {drsMail.trim()&&<a className="btn ghost sm" href={"mailto:"+drsMail.trim()}>✉️ E-Mail</a>}</div>}</div>
 
     {ed&&<div className="notify-box" style={{marginBottom:14}}>
       <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>In Kalender speichern</div>
