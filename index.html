@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.3";
+const APP_VERSION="v1.6.4";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -1653,7 +1653,7 @@ function Technikerplanung({store,soloEmp}){
   const{employees,projects,techAssignments,absences,api,workdays,versicherungen,awCapacity,rolePlanung,isAdmin}=store;
   const now=new Date();
   const[wk,setWk]=useState(isoWeek(now));const[yr,setYr]=useState(isoYear(now));
-  const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);const[techPop,setTechPop]=useState(null);
+  const[modal,setModal]=useState(null);const[dragId,setDragId]=useState(null);const[dropCell,setDropCell]=useState(null);const[techPop,setTechPop]=useState(null);const[pdfOpen,setPdfOpen]=useState(false);
   const[empQ,setEmpQ]=useState("");const[projFilter,setProjFilter]=useState("");const[versFilter,setVersFilter]=useState("");const[hideUnavail,setHideUnavail]=useState(false);
   const monday=mondayOfWeek(yr,wk);
   const wdays=workDaysOfWeek(monday,workdays);const days=wdays.map(w=>w.date);const dayIdx=wdays.map(w=>w.idx);
@@ -1682,6 +1682,7 @@ function Technikerplanung({store,soloEmp}){
       <button className="btn sm nav-wk" onClick={()=>nav(1)} title="Eine Kalenderwoche vor">Weiter <Ic d={ICONS.chev}/></button>
       <button className="btn sm" onClick={()=>{setWk(isoWeek(now));setYr(isoYear(now));}}>Heute</button>
       <span className="spacer"></span>
+      {!soloEmp&&<button className="btn sm" onClick={()=>setPdfOpen(true)} title="Einsatzplanung als PDF für einen Zeitraum"><Ic d={ICONS.pdf}/> PDF (Zeitraum)</button>}
       <span className="badge b-teal" title="Geplante AW dieser Woche (sichtbare Techniker)">Σ AW Woche: {fmtAW(weekPlanned)}</span>
     </div>
     {!soloEmp&&<div className="flex wrap" style={{marginBottom:10,gap:8}}>
@@ -1753,7 +1754,25 @@ function Technikerplanung({store,soloEmp}){
       onEdit={t=>{const c=techPop;setTechPop(null);setModal({employeeId:c.employeeId,date:c.date,editing:t});}}
       onAdd={()=>{const c=techPop;setTechPop(null);setModal({employeeId:c.employeeId,date:c.date});}}
       onClose={()=>setTechPop(null)}/>}
+    {pdfOpen&&<TechPdfModal store={store} defaultVon={weekDates[0]} defaultBis={weekDates[weekDates.length-1]}
+      techEmps={visibleEmployees} onClose={()=>setPdfOpen(false)}/>}
   </div>);
+}
+function TechPdfModal({store,defaultVon,defaultBis,techEmps,onClose}){
+  const{techAssignments,projects,appUrl}=store;
+  const[von,setVon]=useState(defaultVon);const[bis,setBis]=useState(defaultBis);
+  const cnt=techAssignments.filter(t=>techEmps.some(e=>e.id===t.employeeId)&&t.date>=von&&t.date<=bis).length;
+  function make(){const lo=von>bis?bis:von,hi=von>bis?von:bis;
+    generateTechRangePDF(techEmps,techAssignments,projects,lo,hi,appUrl);onClose();}
+  return(<Modal title="Techniker-Einsatzplanung als PDF" onClose={onClose}
+    footer={<><button className="btn" onClick={onClose}>Abbrechen</button><span className="spacer"></span>
+      <button className="btn primary" onClick={make} disabled={cnt===0}><Ic d={ICONS.pdf}/> PDF erstellen</button></>}>
+    <p className="muted mini" style={{marginTop:0}}>Erstellt eine PDF-Einsatzplanung für den gewählten Zeitraum mit denselben Infos wie die WhatsApp-Nachricht (Projekt/Autohaus, Adresse, Fahrzeuge, AW, Versicherung, Bemerkung, Ansprechpartner). Adressen erscheinen als klickbarer „Route öffnen"-Link.</p>
+    <div className="row2">
+      <div className="field"><label>Von</label><input type="date" value={von} onChange={e=>{setVon(e.target.value);if(e.target.value>bis)setBis(e.target.value);}}/></div>
+      <div className="field"><label>Bis</label><input type="date" value={bis} onChange={e=>setBis(e.target.value)}/></div></div>
+    <div className="mini muted">{cnt} Technikertermin(e) im Zeitraum für {techEmps.length} angezeigte Techniker.</div>
+  </Modal>);
 }
 
 function TechDayPopup({store,ctx,onEdit,onAdd,onClose}){
@@ -1805,6 +1824,12 @@ function TechModal({store,ctx,onClose}){
   const[startTime,setStartTime]=useState(ed?.startTime||"08:00");const[endTime,setEndTime]=useState(ed?.endTime||"17:00");
   const[vehicles,setVehicles]=useState(ed?.vehicles&&ed.vehicles.length?ed.vehicles:[{kennzeichen:"",vin:"",aw:"",awDone:""}]);
   const[absArt,setAbsArt]=useState("Urlaub");const[absNote,setAbsNote]=useState("");
+  const[copyTargets,setCopyTargets]=useState([]);const[copyBusy,setCopyBusy]=useState(false);
+  const techColleagues=employees.filter(e=>showsInTech(e,store.rolePlanung)&&e.id!==ctx.employeeId);
+  async function copyToTechs(){if(!copyTargets.length)return;setCopyBusy(true);
+    const rows=copyTargets.map(id=>({...base,employeeId:id,date:ctx.date,confirmed:false,sendLog:[]}));
+    const ok=await api.addTech(rows);setCopyBusy(false);
+    if(ok){store.showToast(copyTargets.length===1?"Zu 1 Techniker kopiert":("Zu "+copyTargets.length+" Technikern kopiert"));setCopyTargets([]);}}
   const usedVers=versicherungen.filter(v=>v.active!==false);
   const projFiltered=activeProjects.filter(p=>!projQ||p.name.toLowerCase().includes(projQ.toLowerCase())||(p.alias||"").toLowerCase().includes(projQ.toLowerCase())||p.nr.includes(projQ));
   const pickedProject=projects.find(p=>p.nr===projectNr);
@@ -2013,6 +2038,18 @@ function TechModal({store,ctx,onClose}){
         <Ic d={ICONS.week}/> Termin herunterladen (.ics)</button>
       <div className="mini muted" style={{marginTop:7}}>Öffnet sich in Outlook, Apple Kalender oder Google Kalender.</div></div>}
 
+    {ed&&mayEdit&&mode==="tech"&&techColleagues.length>0&&<div className="notify-box" style={{marginBottom:14}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Zu weiteren Technikern kopieren</div>
+      <div className="mini muted" style={{marginBottom:8}}>Kopiert diesen Termin ({fmtDE(ctx.date)}) mit allen Angaben (Projekt, Adresse, Fahrzeuge, AW, Ansprechpartner) zu den ausgewählten Technikern.</div>
+      <div className="diffcol" style={{maxHeight:160,overflowY:"auto",marginBottom:8}}>
+        {techColleagues.map(c=>(<label key={c.id} className="flex" style={{gap:8,padding:"3px 0",cursor:"pointer"}}>
+          <input type="checkbox" style={{width:"auto"}} checked={copyTargets.includes(c.id)}
+            onChange={e=>setCopyTargets(t=>e.target.checked?[...t,c.id]:t.filter(x=>x!==c.id))}/>
+          <span>{c.name}</span></label>))}</div>
+      <button type="button" className="btn sm primary" onClick={copyToTechs} disabled={!copyTargets.length||copyBusy}>
+        <Ic d={ICONS.copy||ICONS.plus}/> {copyBusy?"Kopiere…":("Zu "+(copyTargets.length||"")+" Techniker"+(copyTargets.length===1?"":"n")+" kopieren")}</button>
+    </div>}
+
     <div className="notify-box">
       <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>Einsatz an Techniker senden</div>
       {!ed&&<div className="mini muted" style={{marginBottom:8}}>Zum Protokollieren des Versands bitte zuerst „Anlegen". Danach erscheint hier die Versandhistorie.</div>}
@@ -2065,6 +2102,41 @@ function generatePersonPDF(emp,items,projects,days,wk,yr,appUrl,pdfFields){
   let y=doc.lastAutoTable.finalY+10;
   if(appUrl){doc.setFontSize(9);doc.setTextColor(37,99,235);doc.text("Aktueller Plan online: "+appUrl,14,y);}
   doc.save("Einsatzplan_"+emp.name.replace(/[^a-zA-Z0-9]/g,"_")+"_KW"+wk+".pdf");
+}
+function generateTechRangePDF(techEmps,techAssignments,projects,vonYmd,bisYmd,appUrl){
+  const JsPDF=ensurePDF();if(!JsPDF)return;
+  const doc=new JsPDF({unit:"mm",format:"a4"});const mL=14,mR=14,pageW=210,maxY=282;let y=16;
+  function ensure(h){if(y+h>maxY){doc.addPage();y=16;}}
+  function wrap(txt,x,size){doc.setFontSize(size);const parts=doc.splitTextToSize(String(txt),pageW-x-mR);parts.forEach(w=>{ensure(size*0.42+1.6);doc.text(w,x,y);y+=size*0.42+1.6;});}
+  doc.setFontSize(15);doc.setTextColor(20);doc.text("Techniker-Einsatzplanung",mL,y);y+=6;
+  doc.setFontSize(10);doc.setTextColor(120);doc.text("Zeitraum "+fmtDE(vonYmd)+" – "+fmtDE(bisYmd),mL,y);y+=8;doc.setTextColor(20);
+  let any=false;
+  techEmps.forEach(emp=>{
+    const items=sortByTime(techAssignments.filter(t=>t.employeeId===emp.id&&t.date>=vonYmd&&t.date<=bisYmd));
+    if(!items.length)return;any=true;
+    ensure(12);doc.setFontSize(12);doc.setTextColor(37,99,235);doc.text(emp.name,mL,y);y+=6;doc.setTextColor(20);
+    items.forEach(t=>{const p=projects.find(x=>x.nr===t.projectNr);
+      const when=t.allDay===false&&t.startTime?(fmtDE(t.date)+", "+t.startTime+(t.endTime?"–"+t.endTime+" Uhr":" Uhr")):(fmtDE(t.date)+" (ganztägig)");
+      ensure(9);doc.setFontSize(10);doc.setFont(undefined,"bold");doc.setTextColor(20);
+      doc.text(when+"  ·  "+(t.autohaus||p?.name||"-"),mL,y);doc.setFont(undefined,"normal");y+=5;
+      doc.setTextColor(60);
+      if(t.dauer)wrap("Einsatzdauer: "+t.dauer,mL+2,9);
+      if(t.adresse)wrap("Adresse: "+String(t.adresse).replace(/\n/g,", "),mL+2,9);
+      const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);
+      veh.forEach(v=>{const parts=[];if(v.kennzeichen)parts.push("Kennz.: "+v.kennzeichen);if(v.vin)parts.push("VIN: "+v.vin);if(v.aw!==""&&v.aw!=null)parts.push("AW: "+fmtAW(Number(v.aw)));wrap("• "+parts.join("  ·  "),mL+2,9);});
+      const tot=awSum(t);if(tot)wrap("Geplante AW gesamt: "+fmtAW(tot),mL+2,9);
+      if(t.versicherung)wrap("Versicherung: "+t.versicherung,mL+2,9);
+      const noteTxt=deriveNoteText(t.notes)||t.note;if(noteTxt)wrap("Bemerkung: "+String(noteTxt).replace(/\n/g," "),mL+2,9);
+      if(t.kontaktName||t.kontaktTel||t.kontaktMail)wrap("Ansprechpartner Autohaus: "+[t.kontaktName,t.kontaktTel,t.kontaktMail].filter(Boolean).join("  ·  "),mL+2,9);
+      if(t.drsName||t.drsTel||t.drsMail)wrap("Ansprechpartner DRS: "+[t.drsName,t.drsTel,t.drsMail].filter(Boolean).join("  ·  "),mL+2,9);
+      if(t.adresse){ensure(6);doc.setFontSize(9);doc.setTextColor(37,99,235);doc.textWithLink("Route öffnen ▸",mL+2,y,{url:mapsLink(t.adresse)});doc.setTextColor(60);y+=6;}
+      y+=2.5;doc.setTextColor(20);
+    });
+    y+=3;
+  });
+  if(!any){doc.setFontSize(11);doc.text("Keine Technikertermine im gewählten Zeitraum.",mL,y);y+=8;}
+  if(appUrl){ensure(8);doc.setFontSize(9);doc.setTextColor(37,99,235);doc.textWithLink("Aktueller Plan online ▸",mL,y,{url:appUrl});doc.setTextColor(20);}
+  doc.save("Technikerplanung_"+vonYmd+"_bis_"+bisYmd+".pdf");
 }
 
 /* ============ PROJEKTE ============ */
