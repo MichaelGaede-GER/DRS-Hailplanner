@@ -100,8 +100,8 @@ textarea{resize:vertical;min-height:60px}
 .modal-h h3{margin:0;font-size:16.5px;font-weight:600}
 .modal-b{padding:22px}
 .modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;background:var(--panel2);border-radius:0 0 14px 14px;flex-wrap:wrap}
-.x-btn{background:none;border:none;cursor:pointer;color:var(--muted);padding:4px;border-radius:6px;width:auto}
-.x-btn:hover{background:var(--panel2);color:var(--text)}
+.x-btn{background:var(--panel2);border:1px solid var(--line);cursor:pointer;color:var(--text);padding:6px;border-radius:8px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.x-btn:hover{background:var(--red,#ef4444);border-color:var(--red,#ef4444);color:#fff}
 /* week */
 .week-scroll{overflow:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 200px);border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow)}
 .week-grid{display:grid;min-width:1050px}
@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.7";
+const APP_VERSION="v1.6.8";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -1374,7 +1374,7 @@ function DayPopup({store,ctx,onEdit,onAdd,onClose}){
           contactName:a.kontaktName,contactTel:a.kontaktTel,contactMail:a.kontaktMail})} title="In Kalender speichern (Outlook/Apple/Google)"><Ic d={ICONS.week}/> Kalender</button>}
         {rHome&&<a className="btn sm" href={rHome} target="_blank" rel="noopener" title="Route ab Wohnort des Mitarbeiters">🏠 ab Wohnort</a>}
         {rStd&&<a className="btn sm" href={rStd} target="_blank" rel="noopener" title="Route ab aktuellem Standort (GPS)">📍 ab Standort</a>}
-        {mayEdit&&<button className="btn ghost sm" title="Termin löschen" onClick={()=>{if(confirm("Diesen Termin wirklich löschen?"))api.deleteAssignment(a.id);}}><Ic d={ICONS.trash}/></button>}
+        {mayEdit&&<button className="btn ghost sm" style={{color:"var(--red,#ef4444)",borderColor:"var(--red,#ef4444)"}} title="Termin löschen" onClick={()=>{if(confirm("Diesen Termin wirklich löschen?"))api.deleteAssignment(a.id);}}><Ic d={ICONS.trash}/> Löschen</button>}
       </div>);})}
   </Modal>);
 }
@@ -1459,7 +1459,13 @@ function AssignModal({store,ctx,onClose}){
   const handMsg=handTgt?buildMessage(handTgt,previewA,projects,appUrl):"";
 
   const mayEdit=canTermFor(ctx.employeeId);
-  return(<Modal title={(ed?(mayEdit?"Einsatz bearbeiten":"Einsatz ansehen"):"Einsatz hinzufügen")+" · "+fmtDE(ctx.date)} onClose={onClose} wide
+  const _sig=JSON.stringify({mode,selProjects,eins,title,ort,notes,fromDate,toDate,allDay,startTime,endTime,projektrolle,freeAddr,privat,kontaktName,kontaktTel,kontaktMail});
+  const _initSig=React.useRef(_sig);const dirty=mayEdit&&_sig!==_initSig.current;
+  async function requestClose(){
+    if(dirty){const save=confirm("Möchtest du die Änderungen speichern?\n\nOK = Speichern\nAbbrechen = Verwerfen");
+      if(save){await submit();return;}}
+    onClose();}
+  return(<Modal title={(ed?(mayEdit?"Einsatz bearbeiten":"Einsatz ansehen"):"Einsatz hinzufügen")+" · "+fmtDE(ctx.date)} onClose={requestClose} wide
     footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
       <span className="spacer"></span><button className="btn" onClick={onClose}>Abbrechen</button>
       <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>
@@ -1819,7 +1825,7 @@ function TechDayPopup({store,ctx,onEdit,onAdd,onClose}){
           contactName:t.kontaktName,contactTel:t.kontaktTel,contactMail:t.kontaktMail})} title="In Kalender speichern"><Ic d={ICONS.week}/> Kalender</button>
         {rHome&&<a className="btn sm" href={rHome} target="_blank" rel="noopener">🏠 ab Wohnort</a>}
         {rStd&&<a className="btn sm" href={rStd} target="_blank" rel="noopener">📍 ab Standort</a>}
-        {mayEdit&&<button className="btn ghost sm" title="Technikertermin löschen" onClick={()=>{if(confirm("Diesen Technikertermin wirklich löschen?"))api.deleteTech(t.id);}}><Ic d={ICONS.trash}/></button>}
+        {mayEdit&&<button className="btn ghost sm" style={{color:"var(--red,#ef4444)",borderColor:"var(--red,#ef4444)"}} title="Technikertermin löschen" onClick={()=>{if(confirm("Diesen Technikertermin wirklich löschen?"))api.deleteTech(t.id);}}><Ic d={ICONS.trash}/> Löschen</button>}
       </div>);})}
   </Modal>);
 }
@@ -1920,8 +1926,14 @@ function TechModal({store,ctx,onClose}){
   const plMail=plEmp?(plEmp.email||""):"";
   const plOrt=(pickedProject&&pickedProject.adresse)||adresse||"";
   const plMsg=pickedProject?`Projekt (${pickedProject.nr}) ${pickedProject.name}${plOrt?" und "+plOrt:""}: Ich (${emp?.name||""}) habe eine Frage: `:"";
+  const _sig=JSON.stringify({mode,projectNr,autohaus,adresse,versicherung,dauer,notes,fromDate,toDate,allDay,startTime,endTime,vehicles,absArt,absNote,kontaktName,kontaktTel,kontaktMail,drsName,drsTel,drsMail});
+  const _initSig=React.useRef(_sig);const dirty=mayEdit&&_sig!==_initSig.current;
+  async function requestClose(){
+    if(dirty){const save=confirm("Möchtest du die Änderungen speichern?\n\nOK = Speichern\nAbbrechen = Verwerfen");
+      if(save){await submit();return;}}
+    onClose();}
 
-  return(<Modal title={(ed?(mayEdit?"Technikertermin bearbeiten":"Technikertermin ansehen"):"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={onClose} xwide
+  return(<Modal title={(ed?(mayEdit?"Technikertermin bearbeiten":"Technikertermin ansehen"):"Technikertermin")+" · "+(emp?.name||"")+" · "+fmtDE(ctx.date)} onClose={requestClose} xwide
     footer={mayEdit?<>{ed&&<button className="btn danger" onClick={del}><Ic d={ICONS.trash}/> Löschen</button>}
       <span className="spacer"></span><button className="btn" onClick={onClose}>Abbrechen</button>
       <button className="btn primary" onClick={submit}>{ed?"Speichern":"Anlegen"}</button></>
