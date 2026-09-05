@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.4";
+const APP_VERSION="v1.6.6";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -230,7 +230,7 @@ create table if not exists employees (
   name text not null, email text default '', phone text default '',
   role text default '', adresse text default '', pass_gueltig date,
   freigabe_inland boolean default true, freigabe_ausland boolean default false,
-  gesperrt boolean default false, created_at timestamptz default now());
+  gesperrt boolean default false, sprache text default 'de', created_at timestamptz default now());
 
 create table if not exists absences (
   id uuid primary key default gen_random_uuid(),
@@ -365,6 +365,7 @@ alter table employees add column if not exists pass_gueltig date;
 alter table employees add column if not exists freigabe_inland boolean default true;
 alter table employees add column if not exists freigabe_ausland boolean default false;
 alter table employees add column if not exists gesperrt boolean default false;
+alter table employees add column if not exists sprache text default 'de';
 create table if not exists absences (
   id uuid primary key default gen_random_uuid(),
   employee_id uuid references employees(id) on delete cascade,
@@ -553,6 +554,7 @@ const absFromDb=r=>({id:r.id,employeeId:r.employee_id,art:r.art,von:r.von,bis:r.
 const Ic=({d,...p})=>(<svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
   strokeLinecap="round" strokeLinejoin="round" {...p}><path d={d}/></svg>);
 const ICONS={
+  copy:"M9 9h10a2 2 0 012 2v10a2 2 0 01-2 2H9a2 2 0 01-2-2V11a2 2 0 012-2zM5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1",
   dash:"M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z",
   link:"M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07l1.71-1.71",
   week:"M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
@@ -827,7 +829,7 @@ function App({sb,session}){
     async saveEmployee(rec,isNew){
       const cols={name:rec.name,email:rec.email,phone:rec.phone,role:rec.role,adresse:rec.adresse||"",
         pass_gueltig:rec.passGueltig||null,freigabe_inland:rec.freigabeInland!==false,
-        freigabe_ausland:!!rec.freigabeAusland,gesperrt:!!rec.gesperrt};
+        freigabe_ausland:!!rec.freigabeAusland,gesperrt:!!rec.gesperrt,sprache:rec.sprache||"de"};
       if(isNew){const{data,error}=await sb.from("employees").insert(cols).select().single();
         if(error)return fail(error);setEmployees(es=>[...es,data].sort((a,b)=>a.name.localeCompare(b.name)));showToast("Mitarbeiter angelegt");return true;}
       else{const{error}=await sb.from("employees").update(cols).eq("id",rec.id);
@@ -1631,22 +1633,38 @@ function SendModal({store,onClose}){
 /* ============ TECHNIKERPLANUNG ============ */
 function techColor(t,versicherungen){const v=(versicherungen||[]).find(x=>x.name===t.versicherung);return v?v.color:"var(--teal)";}
 function fmtAW(n){return (Math.round(n*10)/10).toString();}
-function buildTechMessage(emp,t,project,appUrl){
+const SEND_LANGS=[["de","Deutsch"],["en","English"],["ro","Română"],["ru","Русский"],["pt","Português"],["es","Español"],["it","Italiano"],["pl","Polski"]];
+const MSG_I18N={
+  de:{title:"Einsatzplanung",tech:"Techniker",proj:"Projekt/Autohaus",date:"Datum",allday:"ganztägig",dur:"Einsatzdauer",addr:"Adresse",veh:"Fahrzeug(e)",plate:"Kennzeichen",vin:"FIN",aw:"AW",awtot:"Geplante AW gesamt",ins:"Versicherung",note:"Bemerkung",cont:"Ansprechpartner Autohaus",drs:"Ansprechpartner DRS",route:"Route",plan:"Aktueller Plan",confirm:"✅ Bitte bestätige deinen Termin mit einem Klick",clock:"Uhr"},
+  en:{title:"Job schedule",tech:"Technician",proj:"Project/Dealership",date:"Date",allday:"all day",dur:"Duration",addr:"Address",veh:"Vehicle(s)",plate:"Plate",vin:"VIN",aw:"WU",awtot:"Total planned WU",ins:"Insurance",note:"Note",cont:"Dealership contact",drs:"DRS contact",route:"Route",plan:"Current plan",confirm:"✅ Please confirm your appointment with one click",clock:""},
+  ro:{title:"Planificarea intervenției",tech:"Tehnician",proj:"Proiect/Reprezentanță",date:"Data",allday:"toată ziua",dur:"Durata",addr:"Adresă",veh:"Vehicul(e)",plate:"Nr. înmatriculare",vin:"VIN",aw:"UL",awtot:"Total UL planificate",ins:"Asigurare",note:"Observație",cont:"Persoană de contact reprezentanță",drs:"Persoană de contact DRS",route:"Rută",plan:"Plan actual",confirm:"✅ Te rugăm confirmă programarea cu un clic",clock:""},
+  ru:{title:"План работ",tech:"Техник",proj:"Проект/Автосалон",date:"Дата",allday:"весь день",dur:"Продолжительность",addr:"Адрес",veh:"Автомобиль(и)",plate:"Госномер",vin:"VIN",aw:"н.ч.",awtot:"Всего плановых н.ч.",ins:"Страховая",note:"Примечание",cont:"Контакт автосалона",drs:"Контакт DRS",route:"Маршрут",plan:"Текущий план",confirm:"✅ Пожалуйста, подтвердите встречу одним кликом",clock:""},
+  pt:{title:"Planeamento de serviço",tech:"Técnico",proj:"Projeto/Concessionária",date:"Data",allday:"dia inteiro",dur:"Duração",addr:"Endereço",veh:"Veículo(s)",plate:"Matrícula",vin:"VIN",aw:"UT",awtot:"Total de UT planeadas",ins:"Seguro",note:"Observação",cont:"Contacto da concessionária",drs:"Contacto DRS",route:"Rota",plan:"Plano atual",confirm:"✅ Confirme o seu compromisso com um clique",clock:""},
+  es:{title:"Planificación de trabajo",tech:"Técnico",proj:"Proyecto/Concesionario",date:"Fecha",allday:"todo el día",dur:"Duración",addr:"Dirección",veh:"Vehículo(s)",plate:"Matrícula",vin:"VIN",aw:"UT",awtot:"Total UT planificadas",ins:"Seguro",note:"Observación",cont:"Contacto del concesionario",drs:"Contacto DRS",route:"Ruta",plan:"Plan actual",confirm:"✅ Confirma tu cita con un clic",clock:""},
+  it:{title:"Pianificazione intervento",tech:"Tecnico",proj:"Progetto/Concessionaria",date:"Data",allday:"tutto il giorno",dur:"Durata",addr:"Indirizzo",veh:"Veicolo/i",plate:"Targa",vin:"VIN",aw:"UL",awtot:"Totale UL pianificate",ins:"Assicurazione",note:"Nota",cont:"Contatto concessionaria",drs:"Contatto DRS",route:"Percorso",plan:"Piano attuale",confirm:"✅ Conferma il tuo appuntamento con un clic",clock:""},
+  pl:{title:"Plan pracy",tech:"Technik",proj:"Projekt/Salon",date:"Data",allday:"cały dzień",dur:"Czas trwania",addr:"Adres",veh:"Pojazd(y)",plate:"Nr rej.",vin:"VIN",aw:"JR",awtot:"Łącznie planowanych JR",ins:"Ubezpieczenie",note:"Uwaga",cont:"Kontakt salonu",drs:"Kontakt DRS",route:"Trasa",plan:"Aktualny plan",confirm:"✅ Potwierdź termin jednym kliknięciem",clock:""},
+};
+function tMsg(lang){return MSG_I18N[lang]||MSG_I18N.de;}
+function buildTechMessage(emp,t,project,appUrl,lang){
+  const L=tMsg(lang||"de");
   const name=emp?(emp.name.split(",")[1]?.trim()||emp.name):"";
-  const when=t.allDay===false&&t.startTime?(fmtDE(t.date)+", "+t.startTime+(t.endTime?"–"+t.endTime+" Uhr":" Uhr")):(fmtDE(t.date)+" (ganztägig)");
-  let b="Einsatzplanung\n";
-  b+="Techniker: "+name+"\n";
-  b+="Projekt/Autohaus: "+(t.autohaus||project?.name||"-")+"\n";
-  b+="Datum: "+when+"\n";
-  if(t.dauer)b+="Einsatzdauer: "+t.dauer+"\n";
-  if(t.adresse)b+="Adresse:\n"+t.adresse+"\n";
+  const clk=L.clock?(" "+L.clock):"";
+  const when=t.allDay===false&&t.startTime?(fmtDE(t.date)+", "+t.startTime+(t.endTime?"–"+t.endTime+clk:clk)):(fmtDE(t.date)+" ("+L.allday+")");
+  let b=L.title+"\n";
+  b+=L.tech+": "+name+"\n";
+  b+=L.proj+": "+(t.autohaus||project?.name||"-")+"\n";
+  b+=L.date+": "+when+"\n";
+  if(t.dauer)b+=L.dur+": "+t.dauer+"\n";
+  if(t.adresse)b+=L.addr+":\n"+t.adresse+"\n";
   const veh=(t.vehicles||[]).filter(v=>v.kennzeichen||v.vin);
-  if(veh.length){b+="Fahrzeug(e):\n";veh.forEach(v=>{const parts=[];if(v.kennzeichen)parts.push("Kennzeichen: "+v.kennzeichen);if(v.vin)parts.push("VIN: "+v.vin);if(v.aw)parts.push("AW: "+v.aw);b+="  - "+parts.join(" · ")+"\n";});}
-  const tot=awSum(t);if(tot)b+="Geplante AW gesamt: "+fmtAW(tot)+"\n";
-  if(t.versicherung)b+="Versicherung: "+t.versicherung+"\n";
-  if(t.note)b+="Bemerkung: "+t.note+"\n";
-  if(t.adresse)b+="Route: "+mapsLink(t.adresse)+"\n";
-  if(appUrl)b+="\nAktueller Plan: "+appUrl;
+  if(veh.length){b+=L.veh+":\n";veh.forEach(v=>{const parts=[];if(v.kennzeichen)parts.push(L.plate+": "+v.kennzeichen);if(v.vin)parts.push(L.vin+": "+v.vin);if(v.aw)parts.push(L.aw+": "+v.aw);b+="  - "+parts.join(" · ")+"\n";});}
+  const tot=awSum(t);if(tot)b+=L.awtot+": "+fmtAW(tot)+"\n";
+  if(t.versicherung)b+=L.ins+": "+t.versicherung+"\n";
+  const noteTxt=deriveNoteText(t.notes)||t.note;if(noteTxt)b+=L.note+": "+noteTxt+"\n";
+  if(t.kontaktName||t.kontaktTel)b+=L.cont+": "+[t.kontaktName,t.kontaktTel].filter(Boolean).join(", ")+"\n";
+  if(t.drsName||t.drsTel)b+=L.drs+": "+[t.drsName,t.drsTel].filter(Boolean).join(", ")+"\n";
+  if(t.adresse)b+=L.route+": "+mapsLink(t.adresse)+"\n";
+  if(appUrl)b+="\n"+L.plan+": "+appUrl;
   return b;
 }
 function Technikerplanung({store,soloEmp}){
@@ -1825,6 +1843,7 @@ function TechModal({store,ctx,onClose}){
   const[vehicles,setVehicles]=useState(ed?.vehicles&&ed.vehicles.length?ed.vehicles:[{kennzeichen:"",vin:"",aw:"",awDone:""}]);
   const[absArt,setAbsArt]=useState("Urlaub");const[absNote,setAbsNote]=useState("");
   const[copyTargets,setCopyTargets]=useState([]);const[copyBusy,setCopyBusy]=useState(false);
+  const[sendLang,setSendLang]=useState(emp?.sprache||"de");
   const techColleagues=employees.filter(e=>showsInTech(e,store.rolePlanung)&&e.id!==ctx.employeeId);
   async function copyToTechs(){if(!copyTargets.length)return;setCopyBusy(true);
     const rows=copyTargets.map(id=>({...base,employeeId:id,date:ctx.date,confirmed:false,sendLog:[]}));
@@ -1883,7 +1902,7 @@ function TechModal({store,ctx,onClose}){
 
   const _cd=(()=>{const[Y,M,D]=ctx.date.split("-").map(Number);return new Date(Y,M-1,D);})();
   const _mon=ymd(mondayOfWeek(isoYear(_cd),isoWeek(_cd)));
-  const sendMsg=buildTechMessage(emp,{...base,date:ctx.date},project,appUrl)+`\n\n✅ Bitte bestätige deinen Termin mit einem Klick: ${confirmLink(ctx.employeeId,_mon,appUrl)}`;
+  const sendMsg=buildTechMessage(emp,{...base,date:ctx.date},project,appUrl,sendLang)+`\n\n${tMsg(sendLang).confirm}: ${confirmLink(ctx.employeeId,_mon,appUrl)}`;
   const subj="Einsatzplanung "+(autohaus||project?.name||"")+" "+fmtDE(ctx.date);
   const hasPhone=!!(emp?.phone||"").replace(/[^0-9]/g,"");
   function onSend(channel){if(ed)api.logTechSend(ed.id,channel);}
@@ -2051,7 +2070,13 @@ function TechModal({store,ctx,onClose}){
     </div>}
 
     <div className="notify-box">
-      <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>Einsatz an Techniker senden</div>
+      <div className="flex" style={{marginBottom:8}}>
+        <div style={{fontWeight:600,fontSize:12.5}}>Einsatz an Techniker senden</div>
+        <span className="spacer"></span>
+        <label className="flex mini" style={{gap:6,alignItems:"center",whiteSpace:"nowrap"}}>Sprache:
+          <select style={{width:"auto",padding:"4px 8px"}} value={sendLang} onChange={e=>setSendLang(e.target.value)}>
+            {SEND_LANGS.map(([c,n])=><option key={c} value={c}>{n}</option>)}</select></label>
+      </div>
       {!ed&&<div className="mini muted" style={{marginBottom:8}}>Zum Protokollieren des Versands bitte zuerst „Anlegen". Danach erscheint hier die Versandhistorie.</div>}
       <div className="flex wrap">
         <a className="btn green sm" href={hasPhone?waLink(emp.phone,sendMsg):undefined} target="_blank" rel="noopener" onClick={()=>onSend("WhatsApp")}
@@ -2059,7 +2084,12 @@ function TechModal({store,ctx,onClose}){
         <a className="btn primary sm" href={emp?.email?mailLink(emp.email,subj,sendMsg):undefined} onClick={()=>onSend("E-Mail")}
            style={emp?.email?{}:{opacity:.5,pointerEvents:"none"}}><Ic d={ICONS.mail}/> E-Mail (Outlook)</a>
         {adresse.trim()&&<a className="btn sm" href={mapsLink(adresse)} target="_blank" rel="noopener"><Ic d={ICONS.pin}/> Route</a>}
+        <button type="button" className="btn ghost sm" onClick={()=>{navigator.clipboard.writeText(sendMsg);store.showToast("Text kopiert");}}><Ic d={ICONS.copy||ICONS.link}/> Text kopieren</button>
       </div>
+      <details style={{marginTop:8}}>
+        <summary className="mini muted" style={{cursor:"pointer"}}>Vorschau des Textes ({(SEND_LANGS.find(l=>l[0]===sendLang)||["","Deutsch"])[1]})</summary>
+        <textarea readOnly value={sendMsg} style={{marginTop:6,width:"100%",minHeight:150,fontSize:12}}/>
+      </details>
       {ed&&(ed.sendLog||[]).length>0&&<div style={{marginTop:10}}>
         <div className="mini" style={{fontWeight:600,marginBottom:4}}>Versandhistorie</div>
         {ed.sendLog.slice().reverse().map((s,i)=>(<div key={i} className="mini muted">{fmtDE(s.ts.slice(0,10))} – {s.ts.slice(11,16)} Uhr · {s.channel} versendet{s.by?" ("+shortCreator(s.by)+")":""}</div>))}
@@ -2455,14 +2485,14 @@ function EmpEdit({store,emp,onClose}){
   const[tab,setTab]=useState("stamm");
   const[f,setF]=useState({name:emp.name||"",email:emp.email||"",phone:emp.phone||"",role:emp.role||roles[0]||"",
     adresse:emp.adresse||"",passGueltig:emp.pass_gueltig||"",freigabeInland:emp.freigabe_inland!==false,
-    freigabeAusland:!!emp.freigabe_ausland,gesperrt:!!emp.gesperrt});
+    freigabeAusland:!!emp.freigabe_ausland,gesperrt:!!emp.gesperrt,sprache:emp.sprache||"de"});
   const[nabs,setNabs]=useState({art:"Urlaub",von:todayYMD,bis:todayYMD,note:""});
   const set=(k,v)=>setF(o=>({...o,[k]:v}));
   const myAbs=absences.filter(a=>a.employeeId===emp.id).slice().sort((a,b)=>a.von<b.von?1:-1);
   async function submit(){if(!f.name.trim()){store.showToast("Name erforderlich");return;}
     if(await api.saveEmployee({id:emp.id,name:f.name.trim(),email:f.email.trim(),phone:f.phone.trim(),role:f.role,
       adresse:f.adresse.trim(),passGueltig:f.passGueltig||null,freigabeInland:f.freigabeInland,
-      freigabeAusland:f.freigabeAusland,gesperrt:f.gesperrt},isNew))onClose();}
+      freigabeAusland:f.freigabeAusland,gesperrt:f.gesperrt,sprache:f.sprache},isNew))onClose();}
   async function addAbs(){if(!nabs.von||!nabs.bis){store.showToast("Von/Bis erforderlich");return;}
     if(nabs.bis<nabs.von){store.showToast("Bis darf nicht vor Von liegen");return;}
     if(await api.addAbsence({employeeId:emp.id,art:nabs.art,von:nabs.von,bis:nabs.bis,note:nabs.note.trim()}))
@@ -2482,6 +2512,10 @@ function EmpEdit({store,emp,onClose}){
       <div className="row2">
         <div className="field"><label>E-Mail</label><input type="email" value={f.email} onChange={e=>set("email",e.target.value)} placeholder="name@drs.de"/></div>
         <div className="field"><label>Telefonnummer</label><input value={f.phone} onChange={e=>set("phone",e.target.value)} placeholder="+49 170 1234567"/></div></div>
+      <div className="field"><label>Sprache für Versand-Nachrichten</label>
+        <select value={f.sprache} onChange={e=>set("sprache",e.target.value)} style={{maxWidth:260}}>
+          {SEND_LANGS.map(([c,n])=><option key={c} value={c}>{n}</option>)}</select>
+        <div className="mini muted" style={{marginTop:4}}>Wird beim Senden von Terminen automatisch vorausgewählt.</div></div>
       <div className="field"><label>Wohnort / Adresse (für Entfernungsberechnung zum Einsatzort)</label>
         <input value={f.adresse} onChange={e=>set("adresse",e.target.value)} placeholder="Straße Hausnr, PLZ Ort"/>
         {f.adresse.trim()&&<a href={mapsLink(f.adresse)} target="_blank" rel="noopener" className="btn ghost sm" style={{marginTop:6}}><Ic d={ICONS.pin}/> Auf Karte</a>}</div>
