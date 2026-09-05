@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.8";
+const APP_VERSION="v1.6.10";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -244,6 +244,7 @@ create table if not exists projects (
   versicherung text default '', rollen jsonb default '{}'::jsonb,
   fahrzeugarten jsonb default '[]'::jsonb, remote boolean default false, standort text default 'auto',
   kontakt_name text default '', kontakt_tel text default '', kontakt_mail text default '',
+  koord_name text default '', koord_tel text default '', koord_mail text default '',
   schadendatum date, startdatum date, enddatum date,
   gesamt int default 0, fiktiv int default 0, zu_reparieren int default 0,
   dol_fertig int default 0, fortschritt numeric default 0,
@@ -320,6 +321,9 @@ alter table projects    add column if not exists fahrzeugarten jsonb default '[]
 alter table projects    add column if not exists remote boolean default false;
 alter table projects    add column if not exists standort text default 'auto';
 alter table projects    add column if not exists kontakt_name text default '';
+alter table projects    add column if not exists koord_name text default '';
+alter table projects    add column if not exists koord_tel text default '';
+alter table projects    add column if not exists koord_mail text default '';
 alter table projects    add column if not exists kontakt_tel text default '';
 alter table projects    add column if not exists kontakt_mail text default '';
 alter table assignments add column if not exists project_nrs jsonb default '[]'::jsonb;
@@ -504,6 +508,7 @@ const projToDb=p=>({nr:p.nr,name:p.name||"",alias:p.alias||"",typ:p.typ||"",leit
   gesellschaft:p.gesellschaft||"",adresse:p.adresse||"",versicherung:p.versicherung||"",rollen:p.rollen||{},
   fahrzeugarten:p.fahrzeugarten||[],remote:!!p.remote,standort:p.standort||"auto",
   kontakt_name:p.kontaktName||"",kontakt_tel:p.kontaktTel||"",kontakt_mail:p.kontaktMail||"",
+  koord_name:p.koordName||"",koord_tel:p.koordTel||"",koord_mail:p.koordMail||"",
   schadendatum:p.schadendatum||null,
   startdatum:p.startdatum||null,enddatum:p.enddatum||null,gesamt:p.gesamt||0,fiktiv:p.fiktiv||0,
   zu_reparieren:p.zuReparieren||0,dol_fertig:p.dolFertig||0,fortschritt:p.fortschritt||0,
@@ -512,6 +517,7 @@ const projFromDb=r=>({nr:r.nr,name:r.name,alias:r.alias||"",typ:r.typ,leiter:r.l
   gesellschaft:r.gesellschaft||"",adresse:r.adresse||"",versicherung:r.versicherung||"",rollen:r.rollen||{},
   fahrzeugarten:r.fahrzeugarten||[],remote:!!r.remote,standort:r.standort||"auto",
   kontaktName:r.kontakt_name||"",kontaktTel:r.kontakt_tel||"",kontaktMail:r.kontakt_mail||"",
+  koordName:r.koord_name||"",koordTel:r.koord_tel||"",koordMail:r.koord_mail||"",
   schadendatum:r.schadendatum,
   startdatum:r.startdatum,enddatum:r.enddatum,gesamt:r.gesamt,fiktiv:r.fiktiv,zuReparieren:r.zu_reparieren,
   dolFertig:r.dol_fertig,fortschritt:Number(r.fortschritt)||0,umsatz:Number(r.umsatz)||0,
@@ -779,6 +785,7 @@ function App({sb,session}){
   const[toast,showToast]=useToast();const[schemaWarn,setSchemaWarn]=useState(false);
   const myEmail=session.user.email;
   const fail=(error)=>{const m=error?.message||"Unbekannter Fehler";
+    console.error("DB-Fehler:",error);
     if(/column|schema cache|could not find/i.test(m))setSchemaWarn(true);showToast("Fehler: "+m);return false;};
 
   async function reload(){
@@ -854,7 +861,8 @@ function App({sb,session}){
       const rows=list.map(a=>asgToDb({...a,createdBy:myEmail}));
       const{data,error}=await sb.from("assignments").insert(rows).select();
       if(error)return fail(error);
-      setAssignments(as=>[...as,...(data||[]).map(asgFromDb)]);
+      if(!data||!data.length){showToast("⚠️ Nicht gespeichert – bitte einmal das Datenbank-Update ausführen (Einstellungen → Datenbank-Update) und neu laden.");return false;}
+      setAssignments(as=>[...as,...data.map(asgFromDb)]);
       showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");logChange("Termin erstellt",list.length+" Einsatz/Einsätze");return true;},
     async updateAssignment(rec){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
@@ -888,7 +896,9 @@ function App({sb,session}){
     async addTech(list){
       const rows=list.map(t=>techToDb({...t,createdBy:myEmail}));
       const{data,error}=await sb.from("tech_assignments").insert(rows).select();
-      if(error)return fail(error);setTechAssignments(ts=>[...ts,...(data||[]).map(techFromDb)]);
+      if(error)return fail(error);
+      if(!data||!data.length){showToast("⚠️ Nicht gespeichert – bitte einmal das Datenbank-Update ausführen (Einstellungen → Datenbank-Update) und neu laden.");return false;}
+      setTechAssignments(ts=>[...ts,...data.map(techFromDb)]);
       showToast(list.length>1?(list.length+" Technikertermine angelegt"):"Technikertermin angelegt");logChange("Technikertermin erstellt",list.length+"x");return true;},
     async updateTech(rec){
       const{error}=await sb.from("tech_assignments").update(techToDb(rec)).eq("id",rec.id);
@@ -1396,6 +1406,9 @@ function AssignModal({store,ctx,onClose}){
   const[kontaktName,setKontaktName]=useState(ed?.kontaktName||"");
   const[kontaktTel,setKontaktTel]=useState(ed?.kontaktTel||"");
   const[kontaktMail,setKontaktMail]=useState(ed?.kontaktMail||"");
+  const[koordName,setKoordName]=useState("");
+  const[koordTel,setKoordTel]=useState("");
+  const[koordMail,setKoordMail]=useState("");
   const activeProjects=projects.filter(p=>p.status!=="Beendet");
   const filtered=activeProjects.filter(p=>!q||p.name.toLowerCase().includes(q.toLowerCase())||(p.alias||"").toLowerCase().includes(q.toLowerCase())||p.nr.includes(q));
   function toggleProj(nr){setSelProjects(s=>s.includes(nr)?s.filter(x=>x!==nr):[...s,nr]);}
@@ -1403,6 +1416,10 @@ function AssignModal({store,ctx,onClose}){
   const versName=selProjObjs[0]?.versicherung||"";
   const projStandort=selProjObjs.length?effectiveStandort(selProjObjs[0]):"";
   useEffect(()=>{if(!ortTouched&&mode==="project"&&projStandort)setOrt(projStandort);},[projStandort,mode]);
+  useEffect(()=>{const p=selProjObjs[0];
+    if(p&&!koordName&&!koordTel&&!koordMail&&(p.koordName||p.koordTel||p.koordMail)){
+      setKoordName(p.koordName||"");setKoordTel(p.koordTel||"");setKoordMail(p.koordMail||"");}
+  },[selProjects.join(",")]);
 
   async function submit(){
     if(mode==="project"&&selProjects.length===0){store.showToast("Bitte mindestens ein Projekt wählen");return;}
@@ -1425,6 +1442,12 @@ function AssignModal({store,ctx,onClose}){
       const p=projects.find(x=>x.nr===selProjects[0]);
       if(p&&(p.kontaktName!==kontaktName.trim()||p.kontaktTel!==kontaktTel.trim()||p.kontaktMail!==kontaktMail.trim())){
         api.saveProject({...p,kontaktName:kontaktName.trim(),kontaktTel:kontaktTel.trim(),kontaktMail:kontaktMail.trim()},false);
+      }
+    }
+    if(selProjects.length===1&&(projektrolle==="Erstgespräch"||projektrolle==="Besichtigung")&&(koordName.trim()||koordTel.trim()||koordMail.trim())){
+      const p=projects.find(x=>x.nr===selProjects[0]);
+      if(p&&(p.koordName!==koordName.trim()||p.koordTel!==koordTel.trim()||p.koordMail!==koordMail.trim())){
+        api.saveProject({...p,koordName:koordName.trim(),koordTel:koordTel.trim(),koordMail:koordMail.trim()},false);
       }
     }
     if(ed){
@@ -1459,7 +1482,7 @@ function AssignModal({store,ctx,onClose}){
   const handMsg=handTgt?buildMessage(handTgt,previewA,projects,appUrl):"";
 
   const mayEdit=canTermFor(ctx.employeeId);
-  const _sig=JSON.stringify({mode,selProjects,eins,title,ort,notes,fromDate,toDate,allDay,startTime,endTime,projektrolle,freeAddr,privat,kontaktName,kontaktTel,kontaktMail});
+  const _sig=JSON.stringify({mode,selProjects,eins,title,ort,notes,fromDate,toDate,allDay,startTime,endTime,projektrolle,freeAddr,privat,kontaktName,kontaktTel,kontaktMail,koordName,koordTel,koordMail});
   const _initSig=React.useRef(_sig);const dirty=mayEdit&&_sig!==_initSig.current;
   async function requestClose(){
     if(dirty){const save=confirm("Möchtest du die Änderungen speichern?\n\nOK = Speichern\nAbbrechen = Verwerfen");
@@ -1500,6 +1523,21 @@ function AssignModal({store,ctx,onClose}){
       <div className="field"><label>Projektrolle (optional – erscheint im Projekt-Planungsbalken &amp; in der Historie)</label>
         <select value={projektrolle} onChange={e=>setProjektrolle(e.target.value)}>
           <option value="">— keine —</option>{PROJEKTROLLEN.map(r=><option key={r}>{r}</option>)}</select></div>
+      {(projektrolle==="Erstgespräch"||projektrolle==="Besichtigung")&&<div className="notify-box" style={{marginBottom:14}}>
+        <div className="flex" style={{marginBottom:8}}>
+          <div style={{fontWeight:600,fontSize:12.5}}>Versicherungs-Koordinator</div>
+          <span className="spacer"></span>
+          {selProjObjs[0]&&(selProjObjs[0].koordName||selProjObjs[0].koordTel||selProjObjs[0].koordMail)&&
+            <button type="button" className="btn ghost sm" onClick={()=>{const p=selProjObjs[0];setKoordName(p.koordName||"");setKoordTel(p.koordTel||"");setKoordMail(p.koordMail||"");}}>Aus Projekt übernehmen</button>}
+        </div>
+        <div className="row3">
+          <div className="field"><label>Name</label><input value={koordName} onChange={e=>setKoordName(e.target.value)} placeholder="Vor- und Nachname"/></div>
+          <div className="field"><label>Telefon</label><input type="tel" value={koordTel} onChange={e=>setKoordTel(e.target.value)} placeholder="z. B. 0170 1234567"/></div>
+          <div className="field"><label>E-Mail</label><input type="email" value={koordMail} onChange={e=>setKoordMail(e.target.value)} placeholder="name@versicherung.de"/></div></div>
+        {(koordTel.trim()||koordMail.trim())&&<div className="flex wrap" style={{gap:8,marginTop:2}}>
+          {koordTel.trim()&&<a className="btn ghost sm" href={"tel:"+koordTel.replace(/[^0-9+]/g,"")}>📞 Anrufen</a>}
+          {koordMail.trim()&&<a className="btn ghost sm" href={"mailto:"+koordMail.trim()}>✉️ E-Mail</a>}</div>}
+        <div className="mini muted" style={{marginTop:6}}>{selProjObjs.length===1?"Wird beim Speichern im Projekt hinterlegt.":"Bei genau einem gewählten Projekt wird der Koordinator beim Speichern im Projekt hinterlegt."}</div></div>}
       {selProjObjs.length>0&&<div className="notify-box" style={{marginBottom:14}}>
         <div style={{fontWeight:600,fontSize:12.5,marginBottom:6}}>Projektdaten</div>
         {selProjObjs.map(p=>{const st=effectiveStandort(p);return(<div key={p.nr} className="mini" style={{marginBottom:4}}>
@@ -2264,6 +2302,7 @@ function ProjectEdit({store,proj,onClose}){
     fortschritt:proj.fortschritt!=null?Math.round(proj.fortschritt*100):0,status:proj.status||"Vorbereitung",
     versicherung:proj.versicherung||"",standort:proj.standort||"auto",
     kontaktName:proj.kontaktName||"",kontaktTel:proj.kontaktTel||"",kontaktMail:proj.kontaktMail||"",
+    koordName:proj.koordName||"",koordTel:proj.koordTel||"",koordMail:proj.koordMail||"",
     gesellschaft:proj.gesellschaft||"DRS Hagelschaden",umsatz:proj.umsatz||0,technikerkosten:proj.technikerkosten||0});
   const[rollen,setRollen]=useState(proj.rollen||{});
   const[fahrzeugarten,setFahrzeugarten]=useState(proj.fahrzeugarten||[]);
@@ -2281,6 +2320,7 @@ function ProjectEdit({store,proj,onClose}){
     const rec={...proj,nr:f.nr.trim(),name:f.name.trim(),alias:f.alias.trim(),typ:f.typ,adresse:f.adresse.trim(),
       versicherung:f.versicherung,rollen,fahrzeugarten,remote,standort:f.standort,
       kontaktName:f.kontaktName.trim(),kontaktTel:f.kontaktTel.trim(),kontaktMail:f.kontaktMail.trim(),
+      koordName:f.koordName.trim(),koordTel:f.koordTel.trim(),koordMail:f.koordMail.trim(),
       leiter:f.leiter.split("\n").map(x=>x.trim()).filter(Boolean),startdatum:f.startdatum||null,enddatum:f.enddatum||null,
       fortschritt:(parseFloat(f.fortschritt)||0)/100,status:f.status,gesellschaft:f.gesellschaft,
       umsatz:parseFloat(f.umsatz)||0,technikerkosten:parseFloat(f.technikerkosten)||0};
@@ -2307,6 +2347,13 @@ function ProjectEdit({store,proj,onClose}){
         <div className="field"><label>Telefon</label><input type="tel" value={f.kontaktTel} onChange={e=>set("kontaktTel",e.target.value)} placeholder="z. B. 0170 1234567"/></div>
         <div className="field"><label>E-Mail</label><input type="email" value={f.kontaktMail} onChange={e=>set("kontaktMail",e.target.value)} placeholder="name@firma.de"/></div></div>
       <div className="mini muted" style={{marginTop:6}}>Wird bei der Einsatz-/Technikerplanung automatisch vorgeschlagen und bei Änderungen dort synchronisiert.</div></div>
+    <div className="notify-box" style={{marginBottom:14}}>
+      <div style={{fontWeight:600,fontSize:12.5,marginBottom:8}}>Versicherungs-Koordinator</div>
+      <div className="row3">
+        <div className="field"><label>Name</label><input value={f.koordName} onChange={e=>set("koordName",e.target.value)} placeholder="Vor- und Nachname"/></div>
+        <div className="field"><label>Telefon</label><input type="tel" value={f.koordTel} onChange={e=>set("koordTel",e.target.value)} placeholder="z. B. 0170 1234567"/></div>
+        <div className="field"><label>E-Mail</label><input type="email" value={f.koordMail} onChange={e=>set("koordMail",e.target.value)} placeholder="name@versicherung.de"/></div></div>
+      <div className="mini muted" style={{marginTop:6}}>Wird im Termin bei Rolle „Erstgespräch" oder „Besichtigung" eingeblendet.</div></div>
     <div className="row2">
       <div className="field"><label>Fahrzeugarten (Mehrfachauswahl)</label>
         <div className="flex wrap" style={{gap:8}}>{FAHRZEUGARTEN.map(([code,label])=>{const on=fahrzeugarten.includes(code);
