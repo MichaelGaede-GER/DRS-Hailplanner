@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.10";
+const APP_VERSION="v1.6.11";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -864,6 +864,28 @@ function App({sb,session}){
       if(!data||!data.length){showToast("⚠️ Nicht gespeichert – bitte einmal das Datenbank-Update ausführen (Einstellungen → Datenbank-Update) und neu laden.");return false;}
       setAssignments(as=>[...as,...data.map(asgFromDb)]);
       showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");logChange("Termin erstellt",list.length+" Einsatz/Einsätze");return true;},
+    async dbSelfTest(){
+      const r=[];
+      const skey="__writetest_"+Math.random().toString(36).slice(2,8);
+      try{const s1=await sb.from("settings").upsert({key:skey,value:{t:Date.now()}});
+        r.push("Einstellungen schreiben: "+(s1.error?("FEHLER: "+s1.error.message):"ok"));
+        const s2=await sb.from("settings").select("key").eq("key",skey);
+        r.push("Einstellungen zurücklesen: "+(s2.error?("FEHLER: "+s2.error.message):((s2.data&&s2.data.length)?"gefunden ✅ persistiert":"NICHT gefunden ❌")));
+        await sb.from("settings").delete().eq("key",skey);
+      }catch(e){r.push("Einstellungen Ausnahme: "+e.message);}
+      try{const e=await sb.from("employees").select("id").limit(1);
+        const empId=e.data&&e.data[0]&&e.data[0].id;
+        if(!empId){r.push("Termine: kein Mitarbeiter für Test vorhanden");}
+        else{const a1=await sb.from("assignments").insert({employee_id:empId,date:new Date().toISOString().slice(0,10),type:"frei",title:"__SCHREIBTEST__",all_day:true}).select();
+          r.push("Termin schreiben: "+(a1.error?("FEHLER: "+a1.error.message):("ok, "+(a1.data?.length||0)+" Zeile(n) zurück")));
+          const id=a1.data&&a1.data[0]&&a1.data[0].id;
+          if(id){const a2=await sb.from("assignments").select("id").eq("id",id);
+            r.push("Termin zurücklesen: "+(a2.error?("FEHLER: "+a2.error.message):((a2.data&&a2.data.length)?"gefunden ✅ WIRD PERSISTIERT":"NICHT gefunden ❌ WIRD NICHT PERSISTIERT")));
+            await sb.from("assignments").delete().eq("id",id);r.push("Testzeile wieder gelöscht.");}
+        }
+      }catch(e){r.push("Termine Ausnahme: "+e.message);}
+      const txt="DATENBANK-SCHREIBTEST\n\n"+r.join("\n");
+      console.log(txt);alert(txt);return r;},
     async updateAssignment(rec){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
       if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");logChange("Termin geändert",rec.date);return true;},
@@ -2867,9 +2889,12 @@ function Einstellungen({store}){
     <ListEditor title="Projekttypen" desc="Kategorien für Projekte (z. B. Versicherungen, Hagelcover)." skey="typen" items={typen} api={api} showToast={showToast}/>
 
     <div className="card" style={{marginBottom:18}}><div className="card-h"><h3>Datenbank-Update (falls Spalten fehlen)</h3></div><div className="card-b">
-      <p className="muted mini" style={{marginTop:0}}>Wenn du von einer früheren Version kommst und Fehler zu fehlenden Spalten (z. B. „versicherung", „projektrolle") auftreten, führe dieses Skript einmalig im Supabase SQL-Editor aus:</p>
+      <p className="muted mini" style={{marginTop:0}}>Wenn du von einer früheren Version kommst und Fehler zu fehlenden Spalten (z. B. „versicherung", „projektrolle") auftreten, oder wenn neue Einträge nach dem Neuladen verschwinden, führe dieses Skript einmalig im Supabase SQL-Editor aus (enthält auch die nötigen Zugriffs-Regeln/Policies):</p>
       <div className="sql-box">{MIGRATION_SQL}</div>
-      <button className="btn sm" onClick={()=>cp(MIGRATION_SQL)}>{copied===MIGRATION_SQL?"Kopiert ✓":"Update-SQL kopieren"}</button></div></div>
+      <div className="flex wrap" style={{gap:8}}>
+        <button className="btn sm" onClick={()=>cp(MIGRATION_SQL)}>{copied===MIGRATION_SQL?"Kopiert ✓":"Update-SQL kopieren"}</button>
+        <button className="btn sm primary" onClick={()=>api.dbSelfTest()}>🔧 Datenbank-Schreibtest</button></div>
+      <p className="mini muted" style={{marginTop:8}}>Der Schreibtest legt testweise einen Eintrag an, liest ihn zurück und löscht ihn wieder – und zeigt an, ob Einträge wirklich dauerhaft gespeichert werden.</p></div></div>
 
     <div className="card"><div className="card-h"><h3>Daten &amp; Backup</h3></div><div className="card-b">
       <div className="flex wrap"><button className="btn" onClick={exportData}><Ic d={ICONS.download}/> Backup exportieren (JSON)</button>
