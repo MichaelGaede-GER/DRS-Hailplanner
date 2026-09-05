@@ -215,7 +215,7 @@ textarea{resize:vertical;min-height:60px}
 const {useState,useEffect,useMemo,useRef} = React;
 
 /* ============ CONFIG ============ */
-const APP_VERSION="v1.6.11";
+const APP_VERSION="v1.6.12";
 const APP_VERSION_DATE="27.08.2026";
 const HARDCODED_URL="https://yuyykdosjxdovytlmmpy.supabase.co";
 const HARDCODED_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1eXlrZG9zanhkb3Z5dGxtbXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxODI1MjcsImV4cCI6MjEwMTc1ODUyN30.eGLCkWaobm4VB3QO46XNhHGCoNvuFmPxVHvg4XXsOUo";
@@ -628,7 +628,7 @@ function Root(){
   const[recovery,setRecovery]=useState(()=>/type=recovery/.test(window.location.hash||""));
   useEffect(()=>{
     if(!cfg.url||!cfg.key){setBooting(false);return;}
-    let client;try{client=supabase.createClient(cfg.url,cfg.key);}catch(e){setBooting(false);return;}
+    let client;try{client=supabase.createClient(cfg.url,cfg.key,{global:{fetch:(u,o={})=>fetch(u,{...o,cache:"no-store"})}});}catch(e){setBooting(false);return;}
     setSb(client);
     client.auth.getSession().then(({data})=>{setSession(data.session);setBooting(false);});
     const{data:sub}=client.auth.onAuthStateChange((e,s)=>{setSession(s);if(e==="PASSWORD_RECOVERY")setRecovery(true);});
@@ -788,13 +788,24 @@ function App({sb,session}){
     console.error("DB-Fehler:",error);
     if(/column|schema cache|could not find/i.test(m))setSchemaWarn(true);showToast("Fehler: "+m);return false;};
 
+  async function fetchAll(table,orderCol){
+    const pageSize=1000;let from=0;let all=[];
+    for(;;){
+      const{data,error}=await sb.from(table).select("*").order(orderCol||"id").range(from,from+pageSize-1);
+      if(error)return{data:null,error};
+      all=all.concat(data||[]);
+      if(!data||data.length<pageSize)break;
+      from+=pageSize;
+    }
+    return{data:all,error:null};
+  }
   async function reload(){
     setLoading(true);setLoadErr("");
     try{
       const[e,p,a,s]=await Promise.all([
         sb.from("employees").select("*").order("name"),
         sb.from("projects").select("*").order("nr",{ascending:false}),
-        sb.from("assignments").select("*"),
+        fetchAll("assignments"),
         sb.from("settings").select("*")]);
       for(const r of[e,p,a,s])if(r.error)throw r.error;
       setEmployees(e.data||[]);setProjects((p.data||[]).map(projFromDb));
@@ -816,10 +827,10 @@ function App({sb,session}){
       const cl=await sb.from("change_log").select("*").order("ts",{ascending:false}).limit(300);
       if(!cl.error)setChangeLog(cl.data||[]);
       // Technikerplanung getrennt laden (Tabelle existiert evtl. noch nicht → tolerant)
-      const t=await sb.from("tech_assignments").select("*");
+      const t=await fetchAll("tech_assignments");
       if(t.error){if(/relation|does not exist|schema cache|could not find/i.test(t.error.message||""))setSchemaWarn(true);setTechAssignments([]);}
       else setTechAssignments((t.data||[]).map(techFromDb));
-      const ab=await sb.from("absences").select("*");
+      const ab=await fetchAll("absences");
       if(ab.error){if(/relation|does not exist|schema cache|could not find/i.test(ab.error.message||""))setSchemaWarn(true);setAbsences([]);}
       else setAbsences((ab.data||[]).map(absFromDb));
     }catch(err){setLoadErr(err.message||"Ladefehler");}
@@ -866,26 +877,26 @@ function App({sb,session}){
       showToast(list.length>1?(list.length+" Einsätze angelegt"):"Einsatz angelegt");logChange("Termin erstellt",list.length+" Einsatz/Einsätze");return true;},
     async dbSelfTest(){
       const r=[];
-      const skey="__writetest_"+Math.random().toString(36).slice(2,8);
-      try{const s1=await sb.from("settings").upsert({key:skey,value:{t:Date.now()}});
-        r.push("Einstellungen schreiben: "+(s1.error?("FEHLER: "+s1.error.message):"ok"));
-        const s2=await sb.from("settings").select("key").eq("key",skey);
-        r.push("Einstellungen zurücklesen: "+(s2.error?("FEHLER: "+s2.error.message):((s2.data&&s2.data.length)?"gefunden ✅ persistiert":"NICHT gefunden ❌")));
-        await sb.from("settings").delete().eq("key",skey);
-      }catch(e){r.push("Einstellungen Ausnahme: "+e.message);}
+      try{const cnt=await sb.from("assignments").select("id",{count:"exact",head:true});
+        r.push("Termine in Datenbank gesamt: "+(cnt.error?("Fehler: "+cnt.error.message):cnt.count));
+      }catch(e){r.push("Zähl-Fehler: "+e.message);}
+      try{const fa=await fetchAll("assignments");
+        r.push("Beim Laden tatsächlich geholt: "+(fa.error?("Fehler: "+fa.error.message):fa.data.length));
+      }catch(e){r.push("Lade-Fehler: "+e.message);}
       try{const e=await sb.from("employees").select("id").limit(1);
         const empId=e.data&&e.data[0]&&e.data[0].id;
-        if(!empId){r.push("Termine: kein Mitarbeiter für Test vorhanden");}
-        else{const a1=await sb.from("assignments").insert({employee_id:empId,date:new Date().toISOString().slice(0,10),type:"frei",title:"__SCHREIBTEST__",all_day:true}).select();
-          r.push("Termin schreiben: "+(a1.error?("FEHLER: "+a1.error.message):("ok, "+(a1.data?.length||0)+" Zeile(n) zurück")));
-          const id=a1.data&&a1.data[0]&&a1.data[0].id;
-          if(id){const a2=await sb.from("assignments").select("id").eq("id",id);
-            r.push("Termin zurücklesen: "+(a2.error?("FEHLER: "+a2.error.message):((a2.data&&a2.data.length)?"gefunden ✅ WIRD PERSISTIERT":"NICHT gefunden ❌ WIRD NICHT PERSISTIERT")));
+        if(!empId){r.push("Kein Mitarbeiter für Test vorhanden.");}
+        else{const row=asgToDb({employeeId:empId,date:new Date().toISOString().slice(0,10),type:"frei",title:"__SCHREIBTEST__",allDay:true,notes:[],projectNrs:[],createdBy:myEmail});
+          const ins=await sb.from("assignments").insert(row).select();
+          const id=ins.data&&ins.data[0]&&ins.data[0].id;
+          r.push("Anlegen wie in der App: "+(ins.error?("FEHLER: "+ins.error.message):("ok"+(id?"":" (aber KEINE Zeile zurück!)"))));
+          if(id){const fa2=await fetchAll("assignments");
+            const found=(fa2.data||[]).some(x=>x.id===id);
+            r.push("Nach dem Anlegen erneut geladen: "+(found?"gefunden ✅ (alles ok)":"NICHT gefunden ❌ (Ladeproblem!)"));
             await sb.from("assignments").delete().eq("id",id);r.push("Testzeile wieder gelöscht.");}
         }
-      }catch(e){r.push("Termine Ausnahme: "+e.message);}
-      const txt="DATENBANK-SCHREIBTEST\n\n"+r.join("\n");
-      console.log(txt);alert(txt);return r;},
+      }catch(e){r.push("Anlege-Test-Fehler: "+e.message);}
+      const txt="DATENBANK-TEST\n\n"+r.join("\n");console.log(txt);alert(txt);return r;},
     async updateAssignment(rec){
       const{error}=await sb.from("assignments").update(asgToDb(rec)).eq("id",rec.id);
       if(error)return fail(error);setAssignments(as=>as.map(a=>a.id===rec.id?rec:a));showToast("Einsatz aktualisiert");logChange("Termin geändert",rec.date);return true;},
